@@ -1,0 +1,1183 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ROUTE TACTICS">
+<title>ROUTE TACTICS | ルート・タクティクス</title>
+<script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyA-4TpNpWbRZMvQKvm2oP2KPi50KIvdvSA&libraries=geometry"></script>
+<style>
+  :root {
+    --navy: #14233c;
+    --navy-light: #1e3356;
+    --orange: #f36c21;
+    --orange-dark: #d95812;
+    --orange-bg: #fff6f0;
+    --green: #1e7e48;
+    --bg-gray: #f2f5f8;
+    --border: #dce2ea;
+    --text-main: #1e293b;
+    --text-sub: #64748b;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    background: var(--bg-gray);
+    margin: 0;
+    padding: 0 0 40px 0;
+    color: var(--text-main);
+  }
+  .app-header {
+    background: var(--navy);
+    color: #fff;
+    padding: 14px 16px;
+    border-bottom: 4px solid var(--orange);
+    box-shadow: 0 2px 8px rgba(20, 35, 60, 0.15);
+  }
+  .header-inner {
+    max-width: 640px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand-title {
+    font-size: 19px;
+    font-weight: 800;
+    letter-spacing: 1.2px;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .brand-accent {
+    display: inline-block;
+    width: 9px;
+    height: 17px;
+    background: var(--orange);
+    transform: skewX(-15deg);
+  }
+  .brand-sub {
+    font-size: 10px;
+    color: #cbd5e1;
+    letter-spacing: 0.6px;
+    font-weight: 600;
+    margin-top: 2px;
+  }
+  .user-box {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .user-badge {
+    font-size: 11px;
+    font-weight: 700;
+    background: rgba(255,255,255,0.12);
+    padding: 5px 9px;
+    border-radius: 4px;
+    color: #fff;
+    white-space: nowrap;
+  }
+  .btn-user-switch {
+    background: var(--orange);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    width: auto;
+    white-space: nowrap;
+  }
+  .container {
+    max-width: 640px;
+    margin: 12px auto 0;
+    padding: 0 12px;
+  }
+  .panel {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 15px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+  }
+  .sec-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-left: 4px solid var(--orange);
+    padding-left: 10px;
+    margin-bottom: 12px;
+  }
+  .sec-title-en {
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--navy);
+    letter-spacing: 0.8px;
+  }
+  .sec-title-jp {
+    font-size: 11px;
+    color: var(--text-sub);
+    font-weight: 600;
+    margin-left: 6px;
+  }
+  label {
+    display: block;
+    font-size: 11px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    color: var(--text-sub);
+  }
+  input, select {
+    width: 100%;
+    padding: 9px 11px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-sizing: border-box;
+    font-size: 14px;
+    color: var(--text-main);
+    margin-bottom: 9px;
+    background: #fff;
+  }
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--navy);
+  }
+  .row {
+    display: flex;
+    gap: 8px;
+  }
+  .row div {
+    flex: 1;
+  }
+  button {
+    width: 100%;
+    padding: 11px;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button:active { opacity: 0.85; }
+  .btn-save {
+    background: var(--navy);
+    color: #fff;
+    padding: 10px;
+  }
+  .btn-calc {
+    background: var(--orange);
+    color: #fff;
+    font-size: 15px;
+    letter-spacing: 0.5px;
+    padding: 14px;
+    margin-top: 4px;
+    box-shadow: 0 2px 6px rgba(243, 108, 33, 0.25);
+  }
+  .btn-map {
+    background: var(--navy);
+    color: #fff;
+    margin-top: 8px;
+  }
+  .btn-sub {
+    background: var(--bg-gray);
+    color: var(--navy);
+    border: 1px solid var(--border);
+    font-size: 12px;
+    padding: 8px;
+    margin-bottom: 10px;
+  }
+  .btn-now {
+    background: var(--bg-gray);
+    color: var(--navy);
+    border: 1px solid var(--border);
+    font-size: 11px;
+    padding: 5px 10px;
+    width: auto;
+  }
+  .quick-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-bottom: 7px;
+  }
+  .chip {
+    width: auto;
+    padding: 6px 9px;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg-gray);
+    color: var(--text-main);
+    cursor: pointer;
+  }
+  .chip-gps {
+    background: var(--navy);
+    color: #fff;
+    border-color: var(--navy);
+  }
+  .chip-home {
+    background: var(--orange-bg);
+    color: var(--orange-dark);
+    border-color: #f9cdb3;
+  }
+  .places-editor {
+    display: none;
+    background: var(--bg-gray);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px;
+    margin-bottom: 10px;
+  }
+  .place-edit-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .place-edit-row input {
+    margin-bottom: 0;
+    font-size: 12px;
+    padding: 7px 8px;
+  }
+  .place-edit-row .slot-name {
+    flex: 0 0 34%;
+  }
+  .place-edit-row .slot-addr {
+    flex: 1;
+  }
+  .status {
+    font-size: 12px;
+    color: var(--green);
+    text-align: center;
+    height: 16px;
+    margin-top: 4px;
+    font-weight: 700;
+  }
+  .etc-badge {
+    background: var(--bg-gray);
+    border-left: 3px solid var(--navy);
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--navy);
+    margin-bottom: 10px;
+  }
+  .waypoint-box {
+    display: none;
+    background: var(--orange-bg);
+    border: 1px solid #f9cdb3;
+    padding: 12px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+  }
+  .diff-banner {
+    background: var(--navy);
+    color: #fff;
+    padding: 10px 12px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 700;
+    margin-top: 14px;
+    text-align: center;
+  }
+  .compare-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  @media(min-width: 500px) {
+    .compare-grid.grid-3 { grid-template-columns: repeat(3, 1fr); }
+    .compare-grid.grid-2 { grid-template-columns: repeat(2, 1fr); }
+  }
+  .card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px;
+    font-size: 12px;
+  }
+  .card.highway { border-top: 4px solid var(--navy); }
+  .card.mix { border-top: 4px solid var(--orange); background: #fffdfb; }
+  .card.local { border-top: 4px solid var(--green); }
+  .card-title {
+    font-weight: 800;
+    font-size: 13px;
+    color: var(--navy);
+    margin-bottom: 6px;
+  }
+  .time-schedule {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--navy);
+    background: var(--bg-gray);
+    padding: 3px 7px;
+    border-radius: 3px;
+    display: inline-block;
+    margin-bottom: 8px;
+  }
+  .metric-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+    border-bottom: 1px dashed #eef1f5;
+  }
+  .sub-info {
+    font-size: 11px;
+    color: var(--text-sub);
+    margin: 6px 0 4px;
+    font-weight: 600;
+  }
+  .disc-tag {
+    font-size: 10px;
+    color: var(--orange);
+    font-weight: 700;
+  }
+  .price-big {
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--navy);
+    margin-top: 6px;
+    text-align: right;
+  }
+  .card.mix .price-big { color: var(--orange-dark); }
+  .card.local .price-big { color: var(--green); }
+  #map {
+    width: 100%;
+    height: 290px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    margin-top: 12px;
+    display: none;
+  }
+  .nav-group-label {
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--text-sub);
+    margin: 12px 0 4px;
+  }
+  /* プロフィール切替モーダル（端末内保存専用） */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(20, 35, 60, 0.65);
+    z-index: 999;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+  .modal-card {
+    background: #fff;
+    width: 100%;
+    max-width: 400px;
+    border-radius: 6px;
+    border-top: 5px solid var(--orange);
+    padding: 18px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+  }
+  .user-list-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 12px;
+  }
+  .privacy-note {
+    font-size: 11px;
+    color: var(--text-sub);
+    background: var(--bg-gray);
+    padding: 8px 10px;
+    border-radius: 4px;
+    margin-bottom: 12px;
+    line-height: 1.4;
+  }
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="header-inner">
+    <div>
+      <h1 class="brand-title"><span class="brand-accent"></span>ROUTE TACTICS</h1>
+      <div class="brand-sub">ルート・タクティクス｜TIME × TOLL OPTIMIZER</div>
+    </div>
+    <div class="user-box">
+      <div class="user-badge" id="currentUserBadge">👤 デフォルト</div>
+      <button type="button" class="btn-user-switch" onclick="openProfileModal()">名前・切替</button>
+    </div>
+  </div>
+</header>
+
+<!-- プロフィール名・車両切替モーダル（パスワード不要・端末内ローカル保存のみ） -->
+<div class="modal-overlay" id="profileModal">
+  <div class="modal-card">
+    <div class="sec-head" style="margin-bottom:10px;">
+      <div><span class="sec-title-en">LOCAL PROFILE</span><span class="sec-title-jp">表示名・車両プリセット切替</span></div>
+    </div>
+
+    <div class="privacy-note">
+      🔒 入力した名前や自宅住所は外部サーバーへ一切送信されず、<strong>このスマホのブラウザ内だけ</strong>に安全に保存されます。
+    </div>
+
+    <div id="savedProfilesArea" style="display:none;">
+      <label>この端末に保存済みのプロフィール（タップで切替）</label>
+      <div class="user-list-chips" id="savedProfileChips"></div>
+    </div>
+
+    <label>新しい表示名（または車両名）を追加</label>
+    <input type="text" id="newProfileName" placeholder="例：JUN、ヴェルファイア、仕事用など">
+
+    <div id="profileErrorMsg" style="font-size:12px; color:#d93025; font-weight:700; margin-bottom:8px; min-height:16px;"></div>
+
+    <button type="button" class="btn-calc" onclick="createAndSwitchProfile()" style="padding:11px; font-size:13px;">この名前でプロフィール作成・切替</button>
+    <button type="button" class="btn-sub" onclick="deleteCurrentProfile()" id="btnDeleteProfile" style="margin-top:8px; color:#d93025; display:none;">現在のプロフィールを端末から削除</button>
+    <button type="button" class="btn-sub" onclick="closeProfileModal()" style="margin-top:6px; margin-bottom:0;">閉じる</button>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- 01: 車両・マイ拠点（ホーム＋登録地5個）設定 -->
+  <div class="panel">
+    <div class="sec-head">
+      <div><span class="sec-title-en">01 / VEHICLE & PLACES</span><span class="sec-title-jp">車両・自宅・登録地設定</span></div>
+    </div>
+    <div class="row">
+      <div>
+        <label>燃費 (km/L)</label>
+        <input type="number" id="fuelEfficiency" step="0.1" value="15.0">
+      </div>
+      <div>
+        <label>ガソリン単価 (円/L)</label>
+        <input type="number" id="gasPrice" value="157">
+      </div>
+    </div>
+
+    <button type="button" class="btn-sub" onclick="togglePlacesEditor()">📍 自宅（ホーム）・登録地（5ヶ所）を編集する</button>
+    <div id="placesEditor" class="places-editor">
+      <label style="color:var(--orange-dark);">🏠 自宅・ホーム地点（※この端末内のみに保存）</label>
+      <input type="text" id="homePlaceInput" placeholder="例：自宅の住所、最寄り駅など" style="margin-bottom:10px;">
+
+      <label style="color:var(--navy);">⭐ 登録地 1〜5（左：ボタン表示名 ／ 右：検索する施設名・住所）</label>
+      <div class="place-edit-row">
+        <input type="text" class="slot-name" id="placeName0" placeholder="表示名1">
+        <input type="text" class="slot-addr" id="placeAddr0" placeholder="施設名・住所1">
+      </div>
+      <div class="place-edit-row">
+        <input type="text" class="slot-name" id="placeName1" placeholder="表示名2">
+        <input type="text" class="slot-addr" id="placeAddr1" placeholder="施設名・住所2">
+      </div>
+      <div class="place-edit-row">
+        <input type="text" class="slot-name" id="placeName2" placeholder="表示名3">
+        <input type="text" class="slot-addr" id="placeAddr2" placeholder="施設名・住所3">
+      </div>
+      <div class="place-edit-row">
+        <input type="text" class="slot-name" id="placeName3" placeholder="表示名4">
+        <input type="text" class="slot-addr" id="placeAddr3" placeholder="施設名・住所4">
+      </div>
+      <div class="place-edit-row" style="margin-bottom:0;">
+        <input type="text" class="slot-name" id="placeName4" placeholder="表示名5">
+        <input type="text" class="slot-addr" id="placeAddr4" placeholder="施設名・住所5">
+      </div>
+    </div>
+
+    <button class="btn-save" onclick="saveUserSettings()">このスマホ内に設定（燃費・自宅・登録地）を保存</button>
+    <div id="saveStatus" class="status"></div>
+  </div>
+
+  <!-- 02: 日時・ETC割引自動判定 -->
+  <div class="panel">
+    <div class="sec-head">
+      <div><span class="sec-title-en">02 / SCHEDULE & ETC</span><span class="sec-title-jp">日時・割引判定</span></div>
+      <button type="button" class="btn-now" onclick="setNowDateTime()">現在日時</button>
+    </div>
+    <select id="timeMode" onchange="updateEtcPreview()">
+      <option value="departure">出発時間で指定する</option>
+      <option value="arrival">到着時間で指定する</option>
+    </select>
+    <div class="row">
+      <div>
+        <label>走行日</label>
+        <input type="date" id="travelDate" onchange="updateEtcPreview()">
+      </div>
+      <div>
+        <label>時刻</label>
+        <input type="time" id="travelTime" onchange="updateEtcPreview()">
+      </div>
+    </div>
+    <div id="etcPreviewBadge" class="etc-badge">ETC判定: カレンダー同期中...</div>
+    <label>ETC割引モード（基本は自動判定）</label>
+    <select id="etcOverride" onchange="updateEtcPreview()" style="margin-bottom:0;">
+      <option value="auto">自動判定（祝日API＋三連休・繁忙期ルール自動算出）</option>
+      <option value="force_discount">強制：休日・深夜割引（NEXCO 30%OFF）</option>
+      <option value="force_normal">強制：通常料金（割引なし）</option>
+    </select>
+  </div>
+
+  <!-- 03: ルート検索 -->
+  <div class="panel">
+    <div class="sec-head">
+      <div><span class="sec-title-en">03 / ROUTE TACTICS</span><span class="sec-title-jp">3ルート戦略比較</span></div>
+    </div>
+
+    <!-- 出発地 ＋ ワンタップ選択バー -->
+    <label>出発地（ボタンでワンタップ入力）</label>
+    <div class="quick-chips" id="originChips"></div>
+    <input type="text" id="origin" placeholder="出発地を入力（または上のボタンを選択）" value="">
+
+    <!-- 経由地（IC指定） -->
+    <button type="button" class="btn-sub" onclick="toggleWaypoint()">＋ 途中まで高速・途中から下道（経由IC指定）</button>
+    <div id="waypointBox" class="waypoint-box">
+      <label style="color:var(--orange-dark);">経由地 / 乗り降りするIC名</label>
+      <input type="text" id="waypoint" placeholder="例：一宮IC、大高IC、大府 など">
+      <label style="color:var(--orange-dark);">区間モード設定</label>
+      <select id="segmentMode" style="margin-bottom:0;">
+        <option value="hw_to_local">前半【高速】 ➔ 経由地 ➔ 後半【下道】</option>
+        <option value="local_to_hw">前半【下道】 ➔ 経由地 ➔ 後半【高速】</option>
+      </select>
+    </div>
+
+    <!-- 目的地 ＋ ワンタップ選択バー -->
+    <label>目的地（ボタンでワンタップ入力）</label>
+    <div class="quick-chips" id="destChips"></div>
+    <input type="text" id="destination" placeholder="目的地を入力（例：名古屋駅、セントレアなど）" value="">
+
+    <button class="btn-calc" onclick="calculateAll()">ルート・コスト比較を実行</button>
+
+    <!-- 結果表示エリア -->
+    <div id="resultArea" style="display:none;">
+      <div id="diffBanner" class="diff-banner"></div>
+      <div class="compare-grid" id="compareGrid"></div>
+    </div>
+
+    <!-- 地図表示エリア -->
+    <div id="map"></div>
+
+    <!-- ナビ連携ボタン -->
+    <div id="navButtons" style="display:none; margin-top:10px;"></div>
+  </div>
+
+</div>
+
+<script>
+  const API_KEY = "AIzaSyA-4TpNpWbRZMvQKvm2oP2KPi50KIvdvSA";
+  const PROFILES_STORAGE_KEY = "RT_LOCAL_PROFILES_V2";
+  const ACTIVE_PROFILE_KEY = "RT_ACTIVE_PROFILE_V2";
+
+  let currentOrigin = "";
+  let currentDest = "";
+  let currentWaypoint = "";
+  let currentSegmentMode = "";
+  let dynamicHolidaysCache = {};
+  let activeProfileName = "デフォルト";
+
+  // 初期データ（個人情報は含めない）
+  function getDefaultProfile() {
+    return {
+      fuelEfficiency: "15.0",
+      gasPrice: "157",
+      homePlace: "",
+      places: [
+        { name: "名古屋駅", address: "名古屋駅" },
+        { name: "栄", address: "栄駅" },
+        { name: "セントレア", address: "中部国際空港" },
+        { name: "", address: "" },
+        { name: "", address: "" }
+      ]
+    };
+  }
+
+  function getProfilesDb() {
+    try {
+      const raw = localStorage.getItem(PROFILES_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function saveProfilesDb(db) {
+    localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(db));
+  }
+
+  // 現在のプロフィールのデータを画面とワンタップボタンに反映
+  function loadActiveProfile() {
+    const db = getProfilesDb();
+    if (!db[activeProfileName]) {
+      db[activeProfileName] = getDefaultProfile();
+      saveProfilesDb(db);
+    }
+    const prof = db[activeProfileName];
+
+    document.getElementById('currentUserBadge').innerText = `👤 ${activeProfileName}`;  document.getElementById('fuelEfficiency').value = prof.fuelEfficiency \vert{}\vert{} "15.0"; document.getElementById('gasPrice').value = prof.gasPrice \vert{}\vert{} "157"; document.getElementById('homePlaceInput').value = prof.homePlace \vert{}\vert{} "";  const places = prof.places \vert{}\vert{} getDefaultProfile().places; for (let i = 0; i < 5; i++) { const p = places[i] \vert{}\vert{} { name: "", address: "" }; document.getElementById(`placeName${i}`).value = p.name;
+      document.getElementById(`placeAddr${i}`).value = p.address; }  // 自宅が設定されていれば出発地の初期値に自動セット if (prof.homePlace && prof.homePlace.trim() !== "") { document.getElementById('origin').value = prof.homePlace.trim(); }  renderQuickChips(prof.homePlace, places); }  // 出発地・目的地の上部に「現在地」「🏠 自宅」「登録地1〜5」のボタンを生成 function renderQuickChips(homePlace, places) { const originContainer = document.getElementById('originChips'); const destContainer = document.getElementById('destChips'); originContainer.innerHTML = ''; destContainer.innerHTML = '';  // 出発地側：現在地(GPS)ボタン const gpsBtn = document.createElement('button'); gpsBtn.type = 'button'; gpsBtn.className = 'chip chip-gps'; gpsBtn.id = 'btnCurrentLoc'; gpsBtn.innerText = '📍 現在地'; gpsBtn.onclick = () => setLocationToField('origin'); originContainer.appendChild(gpsBtn);  // 自宅ボタン（出発地・目的地の両方） if (homePlace && homePlace.trim() !== "") { const hBtnOrig = document.createElement('button'); hBtnOrig.type = 'button'; hBtnOrig.className = 'chip chip-home'; hBtnOrig.innerText = '🏠 自宅'; hBtnOrig.onclick = () => { document.getElementById('origin').value = homePlace.trim(); }; originContainer.appendChild(hBtnOrig);  const hBtnDest = document.createElement('button'); hBtnDest.type = 'button'; hBtnDest.className = 'chip chip-home'; hBtnDest.innerText = '🏠 自宅'; hBtnDest.onclick = () => { document.getElementById('destination').value = homePlace.trim(); }; destContainer.appendChild(hBtnDest); }  // 登録地 1〜5 ボタン（出発地・目的地の両方） places.forEach((p, idx) => { const label = (p.name && p.name.trim()) ? p.name.trim() : ((p.address && p.address.trim()) ? `登録地${idx + 1}` : "");
+      const addr = (p.address && p.address.trim()) ? p.address.trim() : "";
+      if (!addr) return;
+
+      const btnOrig = document.createElement('button');
+      btnOrig.type = 'button';
+      btnOrig.className = 'chip';
+      btnOrig.innerText = label;
+      btnOrig.onclick = () => { document.getElementById('origin').value = addr; };
+      originContainer.appendChild(btnOrig);
+
+      const btnDest = document.createElement('button');
+      btnDest.type = 'button';
+      btnDest.className = 'chip';
+      btnDest.innerText = label;
+      btnDest.onclick = () => { document.getElementById('destination').value = addr; };
+      destContainer.appendChild(btnDest);
+    });
+  }
+
+  function togglePlacesEditor() {
+    const box = document.getElementById('placesEditor');
+    box.style.display = (box.style.display === 'block') ? 'none' : 'block';
+  }
+
+  // 現在のプロフィールの燃費・自宅・登録地1〜5を端末内に保存
+  function saveUserSettings() {
+    const db = getProfilesDb();
+
+    const updatedPlaces = [];
+    for (let i = 0; i < 5; i++) {
+      updatedPlaces.push({
+        name: document.getElementById(`placeName${i}`).value.trim(), address: document.getElementById(`placeAddr${i}`).value.trim()
+      });
+    }
+
+    db[activeProfileName] = {
+      fuelEfficiency: document.getElementById('fuelEfficiency').value,
+      gasPrice: document.getElementById('gasPrice').value,
+      homePlace: document.getElementById('homePlaceInput').value.trim(),
+      places: updatedPlaces
+    };
+
+    saveProfilesDb(db);
+    renderQuickChips(db[activeProfileName].homePlace, updatedPlaces);
+
+    const status = document.getElementById('saveStatus');
+    status.innerText = `✅「${activeProfileName}」の設定をこのスマホ内に保存しました`; setTimeout(() => { status.innerText = ''; }, 3000); }  // --- プロフィール名・切替モーダル処理（パスワードなし） --- function openProfileModal() { document.getElementById('profileErrorMsg').innerText = ''; document.getElementById('newProfileName').value = ''; renderSavedProfileChips();  const delBtn = document.getElementById('btnDeleteProfile'); delBtn.style.display = (activeProfileName !== 'デフォルト') ? 'block' : 'none';  document.getElementById('profileModal').style.display = 'flex'; }  function closeProfileModal() { document.getElementById('profileModal').style.display = 'none'; }  function renderSavedProfileChips() { const db = getProfilesDb(); const names = Object.keys(db); const area = document.getElementById('savedProfilesArea'); const container = document.getElementById('savedProfileChips'); container.innerHTML = '';  if (names.length > 0) { area.style.display = 'block'; names.forEach(name => { const chip = document.createElement('button'); chip.type = 'button'; chip.className = 'chip' + (name === activeProfileName ? ' chip-home' : ''); chip.innerText = `👤 ${name}`;
+        chip.onclick = () => {
+          activeProfileName = name;
+          localStorage.setItem(ACTIVE_PROFILE_KEY, name);
+          loadActiveProfile();
+          closeProfileModal();
+        };
+        container.appendChild(chip);
+      });
+    } else {
+      area.style.display = 'none';
+    }
+  }
+
+  function createAndSwitchProfile() {
+    const name = document.getElementById('newProfileName').value.trim();
+    const errEl = document.getElementById('profileErrorMsg');
+
+    if (!name) {
+      errEl.innerText = '表示名を入力してください';
+      return;
+    }
+
+    const db = getProfilesDb();
+    if (!db[name]) {
+      db[name] = getDefaultProfile();
+      saveProfilesDb(db);
+    }
+
+    activeProfileName = name;
+    localStorage.setItem(ACTIVE_PROFILE_KEY, name);
+    loadActiveProfile();
+    closeProfileModal();
+  }
+
+  function deleteCurrentProfile() {
+    if (activeProfileName === 'デフォルト') return;
+    if (!confirm(`「${activeProfileName}」の保存データ（自宅・登録地含む）をこの端末から削除しますか？`)) return;  const db = getProfilesDb(); delete db[activeProfileName]; saveProfilesDb(db);  activeProfileName = 'デフォルト'; localStorage.setItem(ACTIVE_PROFILE_KEY, 'デフォルト'); loadActiveProfile(); closeProfileModal(); }  // --- 祝日API＆万年カレンダー --- async function syncHolidaysFromApi() { try { const res = await fetch('https://holidays-jp.github.io/api/v1/date.json'); if (res.ok) { dynamicHolidaysCache = await res.json(); updateEtcPreview(); } } catch (e) {} }  function getNthMonday(year, month, n) { const firstDay = new Date(year, month - 1, 1).getDay(); const firstMonday = (firstDay <= 1) ? (2 - firstDay) : (9 - firstDay); return firstMonday + (n - 1) * 7; }  function isBaseHolidayByFormula(year, month, day) { if (month === 1 && day === 1) return "元日"; if (month === 2 && day === 11) return "建国記念の日"; if (month === 2 && day === 23) return "天皇誕生日"; if (month === 4 && day === 29) return "昭和の日"; if (month === 5 && day === 3) return "憲法記念日"; if (month === 5 && day === 4) return "みどりの日"; if (month === 5 && day === 5) return "こどもの日"; if (month === 8 && day === 11) return "山の日"; if (month === 11 && day === 3) return "文化の日"; if (month === 11 && day === 23) return "勤労感謝の日";  if (month === 1 && day === getNthMonday(year, 1, 2)) return "成人の日"; if (month === 7 && day === getNthMonday(year, 7, 3)) return "海の日"; if (month === 9 && day === getNthMonday(year, 9, 3)) return "敬老の日"; if (month === 10 && day === getNthMonday(year, 10, 2)) return "スポーツの日";  const vernal = Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)); const autumnal = Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)); if (month === 3 && day === vernal) return "春分の日"; if (month === 9 && day === autumnal) return "秋分の日";  return null; }  function formatYMD(dateObj) { const y = dateObj.getFullYear(); const m = String(dateObj.getMonth() + 1).padStart(2, '0'); const d = String(dateObj.getDate()).padStart(2, '0'); return `${y}-${m}-${d}`;
+  }
+
+  function isJapaneseHoliday(dateObj) {
+    const ymd = formatYMD(dateObj);
+    if (dynamicHolidaysCache[ymd]) return true;
+
+    const y = dateObj.getFullYear();
+    const m = dateObj.getMonth() + 1;
+    const d = dateObj.getDate();
+
+    if (isBaseHolidayByFormula(y, m, d)) return true;
+
+    let checkDt = new Date(y, m - 1, d);
+    while (true) {
+      checkDt.setDate(checkDt.getDate() - 1);
+      const baseH = isBaseHolidayByFormula(checkDt.getFullYear(), checkDt.getMonth() + 1, checkDt.getDate());
+      if (!baseH) break;
+      if (checkDt.getDay() === 0) return true;
+    }
+
+    const prevDt = new Date(y, m - 1, d - 1);
+    const nextDt = new Date(y, m - 1, d + 1);
+    if (
+      isBaseHolidayByFormula(prevDt.getFullYear(), prevDt.getMonth() + 1, prevDt.getDate()) &&
+      isBaseHolidayByFormula(nextDt.getFullYear(), nextDt.getMonth() + 1, nextDt.getDate())
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function isWeekendOrHoliday(dateObj) {
+    const day = dateObj.getDay();
+    return (day === 0 || day === 6 || isJapaneseHoliday(dateObj));
+  }
+
+  function countConsecutiveHolidayBlock(dateObj) {
+    if (!isWeekendOrHoliday(dateObj)) return 0;
+    let count = 1;
+
+    let prev = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
+    while (true) {
+      prev.setDate(prev.getDate() - 1);
+      if (isWeekendOrHoliday(prev)) count++;
+      else break;
+    }
+
+    let next = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
+    while (true) {
+      next.setDate(next.getDate() + 1);
+      if (isWeekendOrHoliday(next)) count++;
+      else break;
+    }
+
+    return count;
+  }
+
+  function checkNexcoExclusionDate(dateObj) {
+    const m = dateObj.getMonth() + 1;
+    const d = dateObj.getDate();
+
+    if ((m === 12 && d >= 26) || (m === 1 && d <= 4)) return "年末年始期間（休日割引対象外）";
+    if ((m === 4 && d >= 26) || (m === 5 && d <= 6)) return "GW期間（休日割引対象外）";
+    if (m === 8 && d >= 9 && d <= 16) return "お盆期間（休日割引対象外）";
+
+    const consecutiveDays = countConsecutiveHolidayBlock(dateObj);
+    if (consecutiveDays >= 3) {
+      return `${consecutiveDays}連休期間（三連休以上のため休日割引対象外）`; } return null; }  function evaluateEtcDiscount(startTime, endTime) { const override = document.getElementById('etcOverride').value; if (override === 'force_discount') { return { rate: 0.7, label: "手動設定: 30\%割引適用中", shortLabel: "30\%OFF" }; } if (override === 'force_normal') { return { rate: 1.0, label: "手動設定: 通常料金（割引なし）", shortLabel: "通常" }; }  const daysToCheck = [startTime, endTime]; for (const dt of daysToCheck) { const midnightStart = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 0, 0, 0); const midnightEnd = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 4, 0, 0); if (startTime < midnightEnd && endTime > midnightStart) { return { rate: 0.7, label: "深夜割引 30\%OFF（0〜4時走行）", shortLabel: "深夜30\%OFF" }; } }  const exclusionReason = checkNexcoExclusionDate(startTime); const isHoliday = isWeekendOrHoliday(startTime);  if (isHoliday && exclusionReason) { return { rate: 1.0, label: `${exclusionReason}（通常料金）`, shortLabel: "割引対象外日" };
+    }
+    if (isHoliday) {
+      return { rate: 0.7, label: "休日割引 30%OFF（土日祝）", shortLabel: "休日30%OFF" };
+    }
+    return { rate: 1.0, label: "平日・通常料金（ETC普通車）", shortLabel: "平日通常" };
+  }
+
+  function setLocationToField(fieldId) {
+    if (!navigator.geolocation) {
+      alert("お使いのブラウザは位置情報に対応していません");
+      return;
+    }
+    const btn = document.getElementById('btnCurrentLoc');
+    const origText = btn ? btn.innerText : '📍 現在地';
+    if (btn) btn.innerText = "⏳ 取得中...";
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude.toFixed(5);
+        const lng = pos.coords.longitude.toFixed(5);
+        document.getElementById(fieldId).value = `📍現在地 (${lat},${lng})`;
+        if (btn) {
+          btn.innerText = "✅ 現在地セット";
+          setTimeout(() => { btn.innerText = origText; }, 2000);
+        }
+      },
+      () => {
+        if (btn) btn.innerText = origText;
+        alert("現在地を取得できませんでした。位置情報の許可を確認してください。");
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+  }
+
+  function parseCoordsFromText(text) {
+    if (!text) return null;
+    const match = text.match(/(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)/);
+    if (match) {
+      return { latitude: parseFloat(match[1]), longitude: parseFloat(match[2]) };
+    }
+    return null;
+  }
+
+  function buildWaypointPayload(text) {
+    const coords = parseCoordsFromText(text);
+    if (coords) return { location: { latLng: coords } };
+    return { address: text };
+  }
+
+  function formatForGoogleMapsUrl(text) {
+    const coords = parseCoordsFromText(text);
+    if (coords) return `${coords.latitude},${coords.longitude}`;
+    return text;
+  }
+
+  function formatDisplayOrigin(text) {
+    return parseCoordsFromText(text) ? "現在地" : text;
+  }
+
+  window.onload = function() {
+    const savedActive = localStorage.getItem(ACTIVE_PROFILE_KEY);
+    if (savedActive) activeProfileName = savedActive;
+    loadActiveProfile();
+    setNowDateTime();
+    syncHolidaysFromApi();
+  };
+
+  function setNowDateTime() {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    document.getElementById('travelDate').value = `${y}-${m}-${d}`; document.getElementById('travelTime').value = `${hh}:${mm}`; updateEtcPreview(); }  function getSelectedDateTime() { const dateVal = document.getElementById('travelDate').value; const timeVal = document.getElementById('travelTime').value \vert{}\vert{} "08:00"; if (!dateVal) return new Date(); const [y, m, d] = dateVal.split('-').map(Number); const [hh, mm] = timeVal.split(':').map(Number); return new Date(y, m - 1, d, hh, mm, 0); }  function updateEtcPreview() { const baseDt = getSelectedDateTime(); const mode = document.getElementById('timeMode').value; const startDt = (mode === 'departure') ? baseDt : new Date(baseDt.getTime() - 30 * 60000); const endDt = (mode === 'departure') ? new Date(baseDt.getTime() + 30 * 60000) : baseDt; const res = evaluateEtcDiscount(startDt, endDt); document.getElementById('etcPreviewBadge').innerText = `ETC判定: ${res.label}`;
+  }
+
+  function toggleWaypoint() {
+    const box = document.getElementById('waypointBox');
+    const isOpen = box.style.display === 'block';
+    box.style.display = isOpen ? 'none' : 'block';
+  }
+
+  async function fetchRoute(originText, destinationText, avoidTolls) {
+    const res = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': API_KEY,
+        'X-Goog-FieldMask': 'routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.legs.steps.distanceMeters,routes.legs.steps.navigationInstruction'
+      },
+      body: JSON.stringify({
+        origin: buildWaypointPayload(originText),
+        destination: buildWaypointPayload(destinationText),
+        travelMode: 'DRIVE',
+        routingPreference: 'TRAFFIC_AWARE',
+        routeModifiers: { avoidTolls: avoidTolls },
+        languageCode: 'ja',
+        regionCode: 'JP'
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.routes || data.routes.length === 0) return null;
+    return data.routes[0];
+  }
+
+  function detectRoadType(inst, currentType) {
+    if (!inst) return currentType;
+
+    if (/(国道\d+号|県道\d+号|市道|名四|知立バイパス|岡崎バイパス|名豊道路|名岐バイパス|名阪国道).*に入る/.test(inst)) {
+      return 'FREE';
+    }
+    if (/(出口|方面へ出る|を出る|を出て)/.test(inst)) {
+      if (!/(名古屋高速|東名|新東名|名神|新名神|中央道|伊勢湾岸|東海環状|名二環|知多半島).*方面/.test(inst)) {
+        return 'FREE';
+      }
+    }
+    if (/(名古屋高速|都心環状|一宮線|小牧線|大高線|東山線|高速\d+号|ルート\s*\d+)/.test(inst)) {
+      return 'NAGOYA_EXP';
+    }
+    if (/(名二環|名古屋第二環状)/.test(inst)) {
+      return 'MEINIKAN';
+    }
+    if (/(知多半島道路|南知多道路|知多横断|セントレアライン|衣浦豊田|猿投グリーン)/.test(inst)) {
+      return 'CHITA';
+    }
+    if (/(東名|新東名|名神|新名神|中央自動車道|中央道|伊勢湾岸|東海環状|東海北陸|東名阪|紀勢自動車道|高速道路|自動車道)/.test(inst)) {
+      return 'NEXCO';
+    }
+    if (/(国道\d+号|県道\d+号|名四|知立バイパス|岡崎バイパス|名豊道路)/.test(inst)) {
+      return 'FREE';
+    }
+
+    return currentType;
+  }
+
+  function calculateOfficialToll(route, avoidTolls, startTime, endTime) {
+    const discObj = evaluateEtcDiscount(startTime, endTime);
+    if (avoidTolls || !route.legs || !route.legs[0] || !route.legs[0].steps) {
+      return { toll: 0, label: '有料区間なし', discountText: '' };
+    }
+
+    const steps = route.legs[0].steps;
+    let distMap = { FREE: 0, NAGOYA_EXP: 0, MEINIKAN: 0, CHITA: 0, NEXCO: 0 };
+    let currentType = 'FREE';
+
+    for (const step of steps) {
+      const inst = (step.navigationInstruction && step.navigationInstruction.instructions)
+        ? step.navigationInstruction.instructions
+        : "";
+      currentType = detectRoadType(inst, currentType);
+      distMap[currentType] += (step.distanceMeters || 0);
+    }
+
+    let totalToll = 0;
+    let breakdownParts = [];
+    let hasNexco = false;
+
+    const nagoyaKm = distMap.NAGOYA_EXP / 1000;
+    if (nagoyaKm >= 1.0) {
+      let nToll = 0;
+      if (nagoyaKm <= 6.0) nToll = 290;
+      else if (nagoyaKm <= 12.0) nToll = 560;
+      else if (nagoyaKm <= 18.0) nToll = 790;
+      else nToll = 1020;
+      totalToll += nToll;
+      breakdownParts.push(`名高${nagoyaKm.toFixed(0)}km:${nToll}円`);
+    }
+
+    const meinikanKm = distMap.MEINIKAN / 1000;
+    if (meinikanKm >= 1.0) {
+      let mToll = Math.round(((meinikanKm * 29.52 + 150) * 1.1) / 10) * 10;
+      mToll = Math.min(Math.max(mToll, 360), 900);
+      totalToll += mToll;
+      breakdownParts.push(`名二環${meinikanKm.toFixed(0)}km:${mToll}円`);
+    }
+
+    const chitaKm = distMap.CHITA / 1000;
+    if (chitaKm >= 1.5) {
+      let cToll = Math.round((chitaKm * 21.5) / 10) * 10;
+      totalToll += cToll;
+      breakdownParts.push(`知多他${chitaKm.toFixed(0)}km:${cToll}円`);
+    }
+
+    const nexcoKm = distMap.NEXCO / 1000;
+    if (nexcoKm >= 1.5) {
+      hasNexco = true;
+      let nxToll = Math.round(((nexcoKm * 24.6 + 150) * 1.1) / 10) * 10;
+      nxToll = Math.round((nxToll * discObj.rate) / 10) * 10;
+      totalToll += nxToll;
+      breakdownParts.push(`NEXCO${nexcoKm.toFixed(0)}km:${nxToll}円`);
+    }
+
+    return {
+      toll: totalToll,
+      label: breakdownParts.length > 0 ? breakdownParts.join(' + ') : '有料区間なし',
+      discountText: hasNexco ? `(${discObj.shortLabel})` : '' }; }  function formatDuration(sec) { const h = Math.floor(sec / 3600); const m = Math.round((sec \% 3600) / 60); return h > 0 ? `${h}時間${m}分` : `${m}分`;
+  }
+
+  function formatHHMM(dateObj) {
+    const hh = String(dateObj.getHours()).padStart(2, '0');
+    const mm = String(dateObj.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }
+
+  function calcStartEndTime(baseDt, mode, durationSec) {
+    if (mode === 'departure') {
+      const start = new Date(baseDt.getTime());
+      const end = new Date(baseDt.getTime() + durationSec * 1000);
+      return { start, end, text: `${formatHHMM(start)}発 ➔ ${formatHHMM(end)}着` };
+    } else {
+      const end = new Date(baseDt.getTime());
+      const start = new Date(baseDt.getTime() - durationSec * 1000);
+      return { start, end, text: `${formatHHMM(start)}発 ➔ ${formatHHMM(end)}着` };
+    }
+  }
+
+  async function calculateAll() {
+    let origin = document.getElementById('origin').value.trim();
+    const dest = document.getElementById('destination').value.trim();
+    const waypointInput = document.getElementById('waypoint').value.trim();
+    const waypointBoxVisible = document.getElementById('waypointBox').style.display === 'block';
+    const eff = parseFloat(document.getElementById('fuelEfficiency').value) || 15;
+    const gas = parseFloat(document.getElementById('gasPrice').value) || 157;
+    const timeMode = document.getElementById('timeMode').value;
+    const baseDt = getSelectedDateTime();
+
+    if (!origin || !dest) return alert('出発地と目的地を入力してください');
+
+    if (origin === '現在地' && navigator.geolocation) {
+      try {
+        const pos = await new Promise((resolve, reject) =>
+          navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 })
+        );
+        const lat = pos.coords.latitude.toFixed(5);
+        const lng = pos.coords.longitude.toFixed(5);
+        origin = `📍現在地 (${lat},${lng})`;
+        document.getElementById('origin').value = origin;
+      } catch (e) {
+        return alert('現在地の取得に失敗しました。位置情報の許可を確認してください。');
+      }
+    }
+
+    currentOrigin = origin;
+    currentDest = dest;
+    currentWaypoint = (waypointBoxVisible && waypointInput) ? waypointInput : "";
+    currentSegmentMode = document.getElementById('segmentMode').value;
+
+    const resultArea = document.getElementById('resultArea');
+    const compareGrid = document.getElementById('compareGrid');
+    const diffBanner = document.getElementById('diffBanner');
+    const navButtons = document.getElementById('navButtons');
+    
+    resultArea.style.display = 'block';
+    diffBanner.innerHTML = 'ルートと時間帯別ETC料金を算出中...';
+    compareGrid.innerHTML = '';
+    navButtons.style.display = 'none';
+
+    const [hwRoute, localRoute] = await Promise.all([
+      fetchRoute(origin, dest, false),
+      fetchRoute(origin, dest, true)
+    ]);
+
+    if (!hwRoute || !localRoute) {
+      diffBanner.innerHTML = 'ルートの取得に失敗しました。地名を確認してください。';
+      return;
+    }
+
+    const hwDist = hwRoute.distanceMeters / 1000;
+    const hwSec = parseInt(hwRoute.duration.replace('s', ''), 10);
+    const hwTimes = calcStartEndTime(baseDt, timeMode, hwSec);
+    const hwGas = Math.round((hwDist / eff) * gas);
+    const hwTollObj = calculateOfficialToll(hwRoute, false, hwTimes.start, hwTimes.end);
+    const hwToll = hwTollObj.toll;
+    const hwTotal = hwGas + hwToll;
+
+    const actualEtc = evaluateEtcDiscount(hwTimes.start, hwTimes.end);
+    document.getElementById('etcPreviewBadge').innerText = `ETC判定: ${actualEtc.label}`;  const loDist = localRoute.distanceMeters / 1000; const loSec = parseInt(localRoute.duration.replace('s', ''), 10); const loTimes = calcStartEndTime(baseDt, timeMode, loSec); const loGas = Math.round((loDist / eff) * gas); const loTotal = loGas;  let mixData = null; if (currentWaypoint) { const avoid1 = (currentSegmentMode === 'local_to_hw'); const avoid2 = (currentSegmentMode === 'hw_to_local');  const [leg1, leg2] = await Promise.all([ fetchRoute(origin, currentWaypoint, avoid1), fetchRoute(currentWaypoint, dest, avoid2) ]);  if (leg1 && leg2) { const dist1 = leg1.distanceMeters / 1000; const dist2 = leg2.distanceMeters / 1000; const totalDist = dist1 + dist2; const sec1 = parseInt(leg1.duration.replace('s', ''), 10); const sec2 = parseInt(leg2.duration.replace('s', ''), 10); const totalSec = sec1 + sec2; const mixTimes = calcStartEndTime(baseDt, timeMode, totalSec); const midTime = new Date(mixTimes.start.getTime() + sec1 * 1000);  const totalGas = Math.round((totalDist / eff) * gas); const tollObj1 = calculateOfficialToll(leg1, avoid1, mixTimes.start, midTime); const tollObj2 = calculateOfficialToll(leg2, avoid2, midTime, mixTimes.end); const totalToll = tollObj1.toll + tollObj2.toll; const grandTotal = totalGas + totalToll;  const activeTollObj = !avoid1 ? tollObj1 : tollObj2;  mixData = { dist: totalDist, sec: totalSec, timeText: mixTimes.text, gas: totalGas, toll: totalToll, label: activeTollObj.label, discountText: activeTollObj.discountText, total: grandTotal, leg1Type: avoid1 ? '下道' : '高速', leg2Type: avoid2 ? '下道' : '高速', poly1: leg1.polyline.encodedPolyline, poly2: leg2.polyline.encodedPolyline }; } }  if (!mixData) { const timeDiffMin = Math.round((loSec - hwSec) / 60); const costDiff = hwTotal - loTotal;  diffBanner.innerHTML = timeDiffMin > 0 ? `高速利用で ${timeDiffMin}分短縮（コスト差 ＋${costDiff.toLocaleString()}円）` : `一般道でも所要時間はほぼ同等（${Math.abs(costDiff).toLocaleString()}円コスト削減）`;
+
+      compareGrid.className = 'compare-grid grid-2';
+      compareGrid.innerHTML = `
+        <div class="card highway">
+          <div class="card-title"><span>全高速優先</span></div>
+          <div class="time-schedule">${hwTimes.text}</div>
+          <div class="metric-row"><span>距離</span><b>${hwDist.toFixed(1)} km</b></div>
+          <div class="metric-row"><span>所要時間</span><b>${formatDuration(hwSec)}</b></div>
+          <div class="metric-row"><span>燃料費</span><span>約${hwGas.toLocaleString()}円</span></div>
+          <div class="metric-row"><span>高速料金</span><b>${hwToll.toLocaleString()}円 <span class="disc-tag">${hwTollObj.discountText}</span></b></div>
+          <div class="sub-info">${hwTollObj.label}</div>
+          <div class="price-big">計 ${hwTotal.toLocaleString()}円</div>
+        </div>
+        <div class="card local">
+          <div class="card-title"><span>一般道（下道）</span></div>
+          <div class="time-schedule">${loTimes.text}</div>
+          <div class="metric-row"><span>距離</span><b>${loDist.toFixed(1)} km</b></div>
+          <div class="metric-row"><span>所要時間</span><b>${formatDuration(loSec)}</b></div>
+          <div class="metric-row"><span>燃料費</span><span>約${loGas.toLocaleString()}円</span></div>
+          <div class="metric-row"><span>高速料金</span><b>0円</b></div>
+          <div class="sub-info">無料区間のみ</div>
+          <div class="price-big">計 ${loTotal.toLocaleString()}円</div>
+        </div>
+      `;
+
+      drawMap([
+        { poly: hwRoute.polyline.encodedPolyline, color: '#14233c' },
+        { poly: localRoute.polyline.encodedPolyline, color: '#1e7e48' }
+      ]);
+
+      navButtons.innerHTML = `
+        <button class="btn-map" onclick="openGoogleMapsNormal(false)">Googleマップ（高速優先）でナビ開始</button>
+        <button class="btn-map" style="background:var(--green);" onclick="openGoogleMapsNormal(true)">Googleマップ（一般道優先）でナビ開始</button>
+      `;
+
+    } else {
+      const dispOrig = formatDisplayOrigin(origin);
+      diffBanner.innerHTML = `3ルート戦略比較（経由地: ${currentWaypoint}）`;
+      compareGrid.className = 'compare-grid grid-3';
+      compareGrid.innerHTML = `
+        <div class="card highway">
+          <div class="card-title"><span>全高速</span></div>
+          <div class="time-schedule">${hwTimes.text}</div>
+          <div class="metric-row"><span>距離</span><b>${hwDist.toFixed(1)} km</b></div>
+          <div class="metric-row"><span>時間</span><b>${formatDuration(hwSec)}</b></div>
+          <div class="metric-row"><span>燃料費</span><span>約${hwGas.toLocaleString()}円</span></div>
+          <div class="metric-row"><span>高速代</span><b>${hwToll.toLocaleString()}円 <span class="disc-tag">${hwTollObj.discountText}</span></b></div>
+          <div class="sub-info">${hwTollObj.label}</div>
+          <div class="price-big">計 ${hwTotal.toLocaleString()}円</div>
+        </div>
+        <div class="card mix">
+          <div class="card-title"><span style="color:var(--orange-dark);">ミックス (${mixData.leg1Type}➔${mixData.leg2Type})</span></div>
+          <div class="time-schedule">${mixData.timeText}</div>
+          <div class="metric-row"><span>距離</span><b>${mixData.dist.toFixed(1)} km</b></div>
+          <div class="metric-row"><span>時間</span><b>${formatDuration(mixData.sec)}</b></div>
+          <div class="metric-row"><span>燃料費</span><span>約${mixData.gas.toLocaleString()}円</span></div>
+          <div class="metric-row"><span>高速代</span><b>${mixData.toll.toLocaleString()}円 <span class="disc-tag">${mixData.discountText}</span></b></div>
+          <div class="sub-info" style="color:var(--orange-dark);">${mixData.label}</div>
+          <div class="price-big">計 ${mixData.total.toLocaleString()}円</div>
+        </div>
+        <div class="card local">
+          <div class="card-title"><span style="color:var(--green);">全下道</span></div>
+          <div class="time-schedule">${loTimes.text}</div>
+          <div class="metric-row"><span>距離</span><b>${loDist.toFixed(1)} km</b></div>
+          <div class="metric-row"><span>時間</span><b>${formatDuration(loSec)}</b></div>
+          <div class="metric-row"><span>燃料費</span><span>約${loGas.toLocaleString()}円</span></div>
+          <div class="metric-row"><span>高速代</span><b>0円</b></div>
+          <div class="sub-info">無料区間のみ</div>
+          <div class="price-big">計 ${loTotal.toLocaleString()}円</div>
+        </div>
+      `;
+
+      drawMap([
+        { poly: mixData.poly1, color: '#14233c' },
+        { poly: mixData.poly2, color: '#f36c21' },
+        { poly: localRoute.polyline.encodedPolyline, color: '#1e7e48' }
+      ]);
+
+      navButtons.innerHTML = `
+        <div class="nav-group-label">▼ ミックスルート 2段階ナビ開始</div>
+        <button class="btn-map" style="background:var(--orange);" onclick="openGoogleMapsLeg(1)">① 前半区間を開始（${dispOrig} ➔${currentWaypoint}）</button>
+        <button class="btn-map" style="background:var(--orange-dark);" onclick="openGoogleMapsLeg(2)">② 後半区間を開始（${currentWaypoint} ➔${dest}）</button>
+        <div class="nav-group-label">▼ 通常ルート 一括ナビ開始</div>
+        <button class="btn-map" onclick="openGoogleMapsNormal(false)">全高速優先でナビ開始</button>
+        <button class="btn-map" style="background:var(--green);" onclick="openGoogleMapsNormal(true)">全下道優先でナビ開始</button>
+      `;
+    }
+
+    navButtons.style.display = 'block';
+  }
+
+  function drawMap(polylines) {
+    const mapDiv = document.getElementById('map');
+    mapDiv.style.display = 'block';
+    const map = new google.maps.Map(mapDiv, { zoom: 11, center: { lat: 35.2523, lng: 136.8156 } });
+    const bounds = new google.maps.LatLngBounds();
+
+    polylines.forEach(item => {
+      const path = google.maps.geometry.encoding.decodePath(item.poly);
+      new google.maps.Polyline({
+        path: path,
+        geodesic: true,
+        strokeColor: item.color,
+        strokeOpacity: 0.9,
+        strokeWeight: 5,
+        map: map
+      });
+      path.forEach(pt => bounds.extend(pt));
+    });
+    map.fitBounds(bounds);
+  }
+
+  function openGoogleMapsNormal(avoidTolls) {
+    const origParam = formatForGoogleMapsUrl(currentOrigin);
+    const destParam = formatForGoogleMapsUrl(currentDest);
+    let url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origParam)}&destination=${encodeURIComponent(destParam)}&travelmode=driving`;
+    if (avoidTolls) url += `&avoid=tolls`;
+    window.open(url, '_blank');
+  }
+
+  function openGoogleMapsLeg(legNumber) {
+    let origin = (legNumber === 1) ? formatForGoogleMapsUrl(currentOrigin) : formatForGoogleMapsUrl(currentWaypoint);
+    let destination = (legNumber === 1) ? formatForGoogleMapsUrl(currentWaypoint) : formatForGoogleMapsUrl(currentDest);
+    let avoidTolls = (legNumber === 1) ? (currentSegmentMode === 'local_to_hw') : (currentSegmentMode === 'hw_to_local');
+
+    let url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=driving`;
+    if (avoidTolls) url += `&avoid=tolls`;
+    window.open(url, '_blank');
+  }
+</script>
+</body>
+</html>
