@@ -7,7 +7,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="ROUTE TACTICS">
 <title>ROUTE TACTICS | ルート・タクティクス</title>
-<script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyA-4TpNpWbRZMvQKvm2oP2KPi50KIvdvSA&libraries=geometry"></script>
 <style>
   :root {
     --navy: #14233c;
@@ -20,6 +19,9 @@
     --border: #dce2ea;
     --text-main: #1e293b;
     --text-sub: #64748b;
+  }
+  * {
+    box-sizing: border-box;
   }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
@@ -104,6 +106,7 @@
     padding: 15px;
     margin-bottom: 12px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+    overflow: hidden;
   }
   .sec-head {
     display: flex;
@@ -132,18 +135,25 @@
     margin-bottom: 4px;
     color: var(--text-sub);
   }
-input, select {
+  input, select {
+    display: block;
     width: 100%;
     max-width: 100%;
     min-width: 0;
-    padding: 9px 11px;
+    height: 40px;
+    padding: 8px 10px;
     border: 1px solid var(--border);
     border-radius: 4px;
-    box-sizing: border-box;
     font-size: 14px;
     color: var(--text-main);
     margin-bottom: 9px;
     background: #fff;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  input[type="date"], input[type="time"] {
+    padding: 6px 8px;
+    line-height: 24px;
   }
   input:focus, select:focus {
     outline: none;
@@ -152,11 +162,11 @@ input, select {
   .row {
     display: flex;
     gap: 8px;
+    width: 100%;
   }
-  .row div {
-    flex: 1;
+  .row > div {
+    flex: 1 1 0%;
     min-width: 0;
-  }
   }
   button {
     width: 100%;
@@ -249,6 +259,7 @@ input, select {
     margin-bottom: 0;
     font-size: 12px;
     padding: 7px 8px;
+    height: 36px;
   }
   .place-edit-row .slot-name {
     flex: 0 0 34%;
@@ -367,7 +378,6 @@ input, select {
     color: var(--text-sub);
     margin: 12px 0 4px;
   }
-  /* プロフィール切替モーダル（端末内保存専用） */
   .modal-overlay {
     display: none;
     position: fixed;
@@ -419,7 +429,6 @@ input, select {
   </div>
 </header>
 
-<!-- プロフィール名・車両切替モーダル（パスワード不要・端末内ローカル保存のみ） -->
 <div class="modal-overlay" id="profileModal">
   <div class="modal-card">
     <div class="sec-head" style="margin-bottom:10px;">
@@ -448,7 +457,6 @@ input, select {
 
 <div class="container">
 
-  <!-- 01: 車両・マイ拠点（ホーム＋登録地5個）設定 -->
   <div class="panel">
     <div class="sec-head">
       <div><span class="sec-title-en">01 / VEHICLE & PLACES</span><span class="sec-title-jp">車両・自宅・登録地設定</span></div>
@@ -496,7 +504,6 @@ input, select {
     <div id="saveStatus" class="status"></div>
   </div>
 
-  <!-- 02: 日時・ETC割引自動判定 -->
   <div class="panel">
     <div class="sec-head">
       <div><span class="sec-title-en">02 / SCHEDULE & ETC</span><span class="sec-title-jp">日時・割引判定</span></div>
@@ -516,7 +523,7 @@ input, select {
         <input type="time" id="travelTime" onchange="updateEtcPreview()">
       </div>
     </div>
-    <div id="etcPreviewBadge" class="etc-badge">ETC判定: カレンダー同期中...</div>
+    <div id="etcPreviewBadge" class="etc-badge">ETC判定: 読み込み中...</div>
     <label>ETC割引モード（基本は自動判定）</label>
     <select id="etcOverride" onchange="updateEtcPreview()" style="margin-bottom:0;">
       <option value="auto">自動判定（祝日API＋三連休・繁忙期ルール自動算出）</option>
@@ -525,18 +532,15 @@ input, select {
     </select>
   </div>
 
-  <!-- 03: ルート検索 -->
   <div class="panel">
     <div class="sec-head">
       <div><span class="sec-title-en">03 / ROUTE TACTICS</span><span class="sec-title-jp">3ルート戦略比較</span></div>
     </div>
 
-    <!-- 出発地 ＋ ワンタップ選択バー -->
     <label>出発地（ボタンでワンタップ入力）</label>
     <div class="quick-chips" id="originChips"></div>
     <input type="text" id="origin" placeholder="出発地を入力（または上のボタンを選択）" value="">
 
-    <!-- 経由地（IC指定） -->
     <button type="button" class="btn-sub" onclick="toggleWaypoint()">＋ 途中まで高速・途中から下道（経由IC指定）</button>
     <div id="waypointBox" class="waypoint-box">
       <label style="color:var(--orange-dark);">経由地 / 乗り降りするIC名</label>
@@ -548,23 +552,19 @@ input, select {
       </select>
     </div>
 
-    <!-- 目的地 ＋ ワンタップ選択バー -->
     <label>目的地（ボタンでワンタップ入力）</label>
     <div class="quick-chips" id="destChips"></div>
     <input type="text" id="destination" placeholder="目的地を入力（例：名古屋駅、セントレアなど）" value="">
 
     <button class="btn-calc" onclick="calculateAll()">ルート・コスト比較を実行</button>
 
-    <!-- 結果表示エリア -->
     <div id="resultArea" style="display:none;">
       <div id="diffBanner" class="diff-banner"></div>
       <div class="compare-grid" id="compareGrid"></div>
     </div>
 
-    <!-- 地図表示エリア -->
     <div id="map"></div>
 
-    <!-- ナビ連携ボタン -->
     <div id="navButtons" style="display:none; margin-top:10px;"></div>
   </div>
 
@@ -582,7 +582,6 @@ input, select {
   let dynamicHolidaysCache = {};
   let activeProfileName = "デフォルト";
 
-  // 初期データ（個人情報は含めない）
   function getDefaultProfile() {
     return {
       fuelEfficiency: "15.0",
@@ -608,10 +607,11 @@ input, select {
   }
 
   function saveProfilesDb(db) {
-    localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(db));
+    try {
+      localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(db));
+    } catch (e) {}
   }
 
-  // 現在のプロフィールのデータを画面とワンタップボタンに反映
   function loadActiveProfile() {
     const db = getProfilesDb();
     if (!db[activeProfileName]) {
@@ -620,8 +620,58 @@ input, select {
     }
     const prof = db[activeProfileName];
 
-    document.getElementById('currentUserBadge').innerText = `👤 ${activeProfileName}`;  document.getElementById('fuelEfficiency').value = prof.fuelEfficiency \vert{}\vert{} "15.0"; document.getElementById('gasPrice').value = prof.gasPrice \vert{}\vert{} "157"; document.getElementById('homePlaceInput').value = prof.homePlace \vert{}\vert{} "";  const places = prof.places \vert{}\vert{} getDefaultProfile().places; for (let i = 0; i < 5; i++) { const p = places[i] \vert{}\vert{} { name: "", address: "" }; document.getElementById(`placeName${i}`).value = p.name;
-      document.getElementById(`placeAddr${i}`).value = p.address; }  // 自宅が設定されていれば出発地の初期値に自動セット if (prof.homePlace && prof.homePlace.trim() !== "") { document.getElementById('origin').value = prof.homePlace.trim(); }  renderQuickChips(prof.homePlace, places); }  // 出発地・目的地の上部に「現在地」「🏠 自宅」「登録地1〜5」のボタンを生成 function renderQuickChips(homePlace, places) { const originContainer = document.getElementById('originChips'); const destContainer = document.getElementById('destChips'); originContainer.innerHTML = ''; destContainer.innerHTML = '';  // 出発地側：現在地(GPS)ボタン const gpsBtn = document.createElement('button'); gpsBtn.type = 'button'; gpsBtn.className = 'chip chip-gps'; gpsBtn.id = 'btnCurrentLoc'; gpsBtn.innerText = '📍 現在地'; gpsBtn.onclick = () => setLocationToField('origin'); originContainer.appendChild(gpsBtn);  // 自宅ボタン（出発地・目的地の両方） if (homePlace && homePlace.trim() !== "") { const hBtnOrig = document.createElement('button'); hBtnOrig.type = 'button'; hBtnOrig.className = 'chip chip-home'; hBtnOrig.innerText = '🏠 自宅'; hBtnOrig.onclick = () => { document.getElementById('origin').value = homePlace.trim(); }; originContainer.appendChild(hBtnOrig);  const hBtnDest = document.createElement('button'); hBtnDest.type = 'button'; hBtnDest.className = 'chip chip-home'; hBtnDest.innerText = '🏠 自宅'; hBtnDest.onclick = () => { document.getElementById('destination').value = homePlace.trim(); }; destContainer.appendChild(hBtnDest); }  // 登録地 1〜5 ボタン（出発地・目的地の両方） places.forEach((p, idx) => { const label = (p.name && p.name.trim()) ? p.name.trim() : ((p.address && p.address.trim()) ? `登録地${idx + 1}` : "");
+    document.getElementById('currentUserBadge').innerText = `👤 ${activeProfileName}`;
+
+    document.getElementById('fuelEfficiency').value = prof.fuelEfficiency || "15.0";
+    document.getElementById('gasPrice').value = prof.gasPrice || "157";
+    document.getElementById('homePlaceInput').value = prof.homePlace || "";
+
+    const places = prof.places || getDefaultProfile().places;
+    for (let i = 0; i < 5; i++) {
+      const p = places[i] || { name: "", address: "" };
+      document.getElementById(`placeName${i}`).value = p.name;
+      document.getElementById(`placeAddr${i}`).value = p.address;
+    }
+
+    if (prof.homePlace && prof.homePlace.trim() !== "") {
+      document.getElementById('origin').value = prof.homePlace.trim();
+    }
+
+    renderQuickChips(prof.homePlace, places);
+  }
+
+  function renderQuickChips(homePlace, places) {
+    const originContainer = document.getElementById('originChips');
+    const destContainer = document.getElementById('destChips');
+    originContainer.innerHTML = '';
+    destContainer.innerHTML = '';
+
+    const gpsBtn = document.createElement('button');
+    gpsBtn.type = 'button';
+    gpsBtn.className = 'chip chip-gps';
+    gpsBtn.id = 'btnCurrentLoc';
+    gpsBtn.innerText = '📍 現在地';
+    gpsBtn.onclick = () => setLocationToField('origin');
+    originContainer.appendChild(gpsBtn);
+
+    if (homePlace && homePlace.trim() !== "") {
+      const hBtnOrig = document.createElement('button');
+      hBtnOrig.type = 'button';
+      hBtnOrig.className = 'chip chip-home';
+      hBtnOrig.innerText = '🏠 自宅';
+      hBtnOrig.onclick = () => { document.getElementById('origin').value = homePlace.trim(); };
+      originContainer.appendChild(hBtnOrig);
+
+      const hBtnDest = document.createElement('button');
+      hBtnDest.type = 'button';
+      hBtnDest.className = 'chip chip-home';
+      hBtnDest.innerText = '🏠 自宅';
+      hBtnDest.onclick = () => { document.getElementById('destination').value = homePlace.trim(); };
+      destContainer.appendChild(hBtnDest);
+    }
+
+    places.forEach((p, idx) => {
+      const label = (p.name && p.name.trim()) ? p.name.trim() : ((p.address && p.address.trim()) ? `登録地${idx + 1}` : "");
       const addr = (p.address && p.address.trim()) ? p.address.trim() : "";
       if (!addr) return;
 
@@ -646,14 +696,14 @@ input, select {
     box.style.display = (box.style.display === 'block') ? 'none' : 'block';
   }
 
-  // 現在のプロフィールの燃費・自宅・登録地1〜5を端末内に保存
   function saveUserSettings() {
     const db = getProfilesDb();
 
     const updatedPlaces = [];
     for (let i = 0; i < 5; i++) {
       updatedPlaces.push({
-        name: document.getElementById(`placeName${i}`).value.trim(), address: document.getElementById(`placeAddr${i}`).value.trim()
+        name: document.getElementById(`placeName${i}`).value.trim(),
+        address: document.getElementById(`placeAddr${i}`).value.trim()
       });
     }
 
@@ -668,7 +718,39 @@ input, select {
     renderQuickChips(db[activeProfileName].homePlace, updatedPlaces);
 
     const status = document.getElementById('saveStatus');
-    status.innerText = `✅「${activeProfileName}」の設定をこのスマホ内に保存しました`; setTimeout(() => { status.innerText = ''; }, 3000); }  // --- プロフィール名・切替モーダル処理（パスワードなし） --- function openProfileModal() { document.getElementById('profileErrorMsg').innerText = ''; document.getElementById('newProfileName').value = ''; renderSavedProfileChips();  const delBtn = document.getElementById('btnDeleteProfile'); delBtn.style.display = (activeProfileName !== 'デフォルト') ? 'block' : 'none';  document.getElementById('profileModal').style.display = 'flex'; }  function closeProfileModal() { document.getElementById('profileModal').style.display = 'none'; }  function renderSavedProfileChips() { const db = getProfilesDb(); const names = Object.keys(db); const area = document.getElementById('savedProfilesArea'); const container = document.getElementById('savedProfileChips'); container.innerHTML = '';  if (names.length > 0) { area.style.display = 'block'; names.forEach(name => { const chip = document.createElement('button'); chip.type = 'button'; chip.className = 'chip' + (name === activeProfileName ? ' chip-home' : ''); chip.innerText = `👤 ${name}`;
+    status.innerText = `✅「${activeProfileName}」の設定をこのスマホ内に保存しました`;
+    setTimeout(() => { status.innerText = ''; }, 3000);
+  }
+
+  function openProfileModal() {
+    document.getElementById('profileErrorMsg').innerText = '';
+    document.getElementById('newProfileName').value = '';
+    renderSavedProfileChips();
+
+    const delBtn = document.getElementById('btnDeleteProfile');
+    delBtn.style.display = (activeProfileName !== 'デフォルト') ? 'block' : 'none';
+
+    document.getElementById('profileModal').style.display = 'flex';
+  }
+
+  function closeProfileModal() {
+    document.getElementById('profileModal').style.display = 'none';
+  }
+
+  function renderSavedProfileChips() {
+    const db = getProfilesDb();
+    const names = Object.keys(db);
+    const area = document.getElementById('savedProfilesArea');
+    const container = document.getElementById('savedProfileChips');
+    container.innerHTML = '';
+
+    if (names.length > 0) {
+      area.style.display = 'block';
+      names.forEach(name => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'chip' + (name === activeProfileName ? ' chip-home' : '');
+        chip.innerText = `👤 ${name}`;
         chip.onclick = () => {
           activeProfileName = name;
           localStorage.setItem(ACTIVE_PROFILE_KEY, name);
@@ -705,7 +787,64 @@ input, select {
 
   function deleteCurrentProfile() {
     if (activeProfileName === 'デフォルト') return;
-    if (!confirm(`「${activeProfileName}」の保存データ（自宅・登録地含む）をこの端末から削除しますか？`)) return;  const db = getProfilesDb(); delete db[activeProfileName]; saveProfilesDb(db);  activeProfileName = 'デフォルト'; localStorage.setItem(ACTIVE_PROFILE_KEY, 'デフォルト'); loadActiveProfile(); closeProfileModal(); }  // --- 祝日API＆万年カレンダー --- async function syncHolidaysFromApi() { try { const res = await fetch('https://holidays-jp.github.io/api/v1/date.json'); if (res.ok) { dynamicHolidaysCache = await res.json(); updateEtcPreview(); } } catch (e) {} }  function getNthMonday(year, month, n) { const firstDay = new Date(year, month - 1, 1).getDay(); const firstMonday = (firstDay <= 1) ? (2 - firstDay) : (9 - firstDay); return firstMonday + (n - 1) * 7; }  function isBaseHolidayByFormula(year, month, day) { if (month === 1 && day === 1) return "元日"; if (month === 2 && day === 11) return "建国記念の日"; if (month === 2 && day === 23) return "天皇誕生日"; if (month === 4 && day === 29) return "昭和の日"; if (month === 5 && day === 3) return "憲法記念日"; if (month === 5 && day === 4) return "みどりの日"; if (month === 5 && day === 5) return "こどもの日"; if (month === 8 && day === 11) return "山の日"; if (month === 11 && day === 3) return "文化の日"; if (month === 11 && day === 23) return "勤労感謝の日";  if (month === 1 && day === getNthMonday(year, 1, 2)) return "成人の日"; if (month === 7 && day === getNthMonday(year, 7, 3)) return "海の日"; if (month === 9 && day === getNthMonday(year, 9, 3)) return "敬老の日"; if (month === 10 && day === getNthMonday(year, 10, 2)) return "スポーツの日";  const vernal = Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)); const autumnal = Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)); if (month === 3 && day === vernal) return "春分の日"; if (month === 9 && day === autumnal) return "秋分の日";  return null; }  function formatYMD(dateObj) { const y = dateObj.getFullYear(); const m = String(dateObj.getMonth() + 1).padStart(2, '0'); const d = String(dateObj.getDate()).padStart(2, '0'); return `${y}-${m}-${d}`;
+    if (!confirm(`「${activeProfileName}」の保存データ（自宅・登録地含む）をこの端末から削除しますか？`)) return;
+
+    const db = getProfilesDb();
+    delete db[activeProfileName];
+    saveProfilesDb(db);
+
+    activeProfileName = 'デフォルト';
+    localStorage.setItem(ACTIVE_PROFILE_KEY, 'デフォルト');
+    loadActiveProfile();
+    closeProfileModal();
+  }
+
+  async function syncHolidaysFromApi() {
+    try {
+      const res = await fetch('https://holidays-jp.github.io/api/v1/date.json');
+      if (res.ok) {
+        dynamicHolidaysCache = await res.json();
+        updateEtcPreview();
+      }
+    } catch (e) {}
+  }
+
+  function getNthMonday(year, month, n) {
+    const firstDay = new Date(year, month - 1, 1).getDay();
+    const firstMonday = (firstDay <= 1) ? (2 - firstDay) : (9 - firstDay);
+    return firstMonday + (n - 1) * 7;
+  }
+
+  function isBaseHolidayByFormula(year, month, day) {
+    if (month === 1 && day === 1) return "元日";
+    if (month === 2 && day === 11) return "建国記念の日";
+    if (month === 2 && day === 23) return "天皇誕生日";
+    if (month === 4 && day === 29) return "昭和の日";
+    if (month === 5 && day === 3) return "憲法記念日";
+    if (month === 5 && day === 4) return "みどりの日";
+    if (month === 5 && day === 5) return "こどもの日";
+    if (month === 8 && day === 11) return "山の日";
+    if (month === 11 && day === 3) return "文化の日";
+    if (month === 11 && day === 23) return "勤労感謝の日";
+
+    if (month === 1 && day === getNthMonday(year, 1, 2)) return "成人の日";
+    if (month === 7 && day === getNthMonday(year, 7, 3)) return "海の日";
+    if (month === 9 && day === getNthMonday(year, 9, 3)) return "敬老の日";
+    if (month === 10 && day === getNthMonday(year, 10, 2)) return "スポーツの日";
+
+    const vernal = Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4));
+    const autumnal = Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4));
+    if (month === 3 && day === vernal) return "春分の日";
+    if (month === 9 && day === autumnal) return "秋分の日";
+
+    return null;
+  }
+
+  function formatYMD(dateObj) {
+    const y = dateObj.getFullYear();
+    const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const d = String(dateObj.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
 
   function isJapaneseHoliday(dateObj) {
@@ -774,7 +913,34 @@ input, select {
 
     const consecutiveDays = countConsecutiveHolidayBlock(dateObj);
     if (consecutiveDays >= 3) {
-      return `${consecutiveDays}連休期間（三連休以上のため休日割引対象外）`; } return null; }  function evaluateEtcDiscount(startTime, endTime) { const override = document.getElementById('etcOverride').value; if (override === 'force_discount') { return { rate: 0.7, label: "手動設定: 30\%割引適用中", shortLabel: "30\%OFF" }; } if (override === 'force_normal') { return { rate: 1.0, label: "手動設定: 通常料金（割引なし）", shortLabel: "通常" }; }  const daysToCheck = [startTime, endTime]; for (const dt of daysToCheck) { const midnightStart = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 0, 0, 0); const midnightEnd = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 4, 0, 0); if (startTime < midnightEnd && endTime > midnightStart) { return { rate: 0.7, label: "深夜割引 30\%OFF（0〜4時走行）", shortLabel: "深夜30\%OFF" }; } }  const exclusionReason = checkNexcoExclusionDate(startTime); const isHoliday = isWeekendOrHoliday(startTime);  if (isHoliday && exclusionReason) { return { rate: 1.0, label: `${exclusionReason}（通常料金）`, shortLabel: "割引対象外日" };
+      return `${consecutiveDays}連休期間（三連休以上のため休日割引対象外）`;
+    }
+    return null;
+  }
+
+  function evaluateEtcDiscount(startTime, endTime) {
+    const override = document.getElementById('etcOverride').value;
+    if (override === 'force_discount') {
+      return { rate: 0.7, label: "手動設定: 30%割引適用中", shortLabel: "30%OFF" };
+    }
+    if (override === 'force_normal') {
+      return { rate: 1.0, label: "手動設定: 通常料金（割引なし）", shortLabel: "通常" };
+    }
+
+    const daysToCheck = [startTime, endTime];
+    for (const dt of daysToCheck) {
+      const midnightStart = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 0, 0, 0);
+      const midnightEnd = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 4, 0, 0);
+      if (startTime < midnightEnd && endTime > midnightStart) {
+        return { rate: 0.7, label: "深夜割引 30%OFF（0〜4時走行）", shortLabel: "深夜30%OFF" };
+      }
+    }
+
+    const exclusionReason = checkNexcoExclusionDate(startTime);
+    const isHoliday = isWeekendOrHoliday(startTime);
+
+    if (isHoliday && exclusionReason) {
+      return { rate: 1.0, label: `${exclusionReason}（通常料金）`, shortLabel: "割引対象外日" };
     }
     if (isHoliday) {
       return { rate: 0.7, label: "休日割引 30%OFF（土日祝）", shortLabel: "休日30%OFF" };
@@ -795,7 +961,7 @@ input, select {
       (pos) => {
         const lat = pos.coords.latitude.toFixed(5);
         const lng = pos.coords.longitude.toFixed(5);
-        document.getElementById(fieldId).value = `📍現在地 (${lat},${lng})`;
+        document.getElementById(fieldId).value = `📍現在地 (${lat}, ${lng})`;
         if (btn) {
           btn.innerText = "✅ 現在地セット";
           setTimeout(() => { btn.innerText = origText; }, 2000);
@@ -834,14 +1000,6 @@ input, select {
     return parseCoordsFromText(text) ? "現在地" : text;
   }
 
-  window.addEventListener('DOMContentLoaded', function() {
-    const savedActive = localStorage.getItem(ACTIVE_PROFILE_KEY);
-    if (savedActive) activeProfileName = savedActive;
-    loadActiveProfile();
-    setNowDateTime();
-    syncHolidaysFromApi();
-  });
-
   function setNowDateTime() {
     const now = new Date();
     const y = now.getFullYear();
@@ -849,7 +1007,27 @@ input, select {
     const d = String(now.getDate()).padStart(2, '0');
     const hh = String(now.getHours()).padStart(2, '0');
     const mm = String(now.getMinutes()).padStart(2, '0');
-    document.getElementById('travelDate').value = `${y}-${m}-${d}`; document.getElementById('travelTime').value = `${hh}:${mm}`; updateEtcPreview(); }  function getSelectedDateTime() { const dateVal = document.getElementById('travelDate').value; const timeVal = document.getElementById('travelTime').value \vert{}\vert{} "08:00"; if (!dateVal) return new Date(); const [y, m, d] = dateVal.split('-').map(Number); const [hh, mm] = timeVal.split(':').map(Number); return new Date(y, m - 1, d, hh, mm, 0); }  function updateEtcPreview() { const baseDt = getSelectedDateTime(); const mode = document.getElementById('timeMode').value; const startDt = (mode === 'departure') ? baseDt : new Date(baseDt.getTime() - 30 * 60000); const endDt = (mode === 'departure') ? new Date(baseDt.getTime() + 30 * 60000) : baseDt; const res = evaluateEtcDiscount(startDt, endDt); document.getElementById('etcPreviewBadge').innerText = `ETC判定: ${res.label}`;
+    document.getElementById('travelDate').value = `${y}-${m}-${d}`;
+    document.getElementById('travelTime').value = `${hh}:${mm}`;
+    updateEtcPreview();
+  }
+
+  function getSelectedDateTime() {
+    const dateVal = document.getElementById('travelDate').value;
+    const timeVal = document.getElementById('travelTime').value || "08:00";
+    if (!dateVal) return new Date();
+    const [y, m, d] = dateVal.split('-').map(Number);
+    const [hh, mm] = timeVal.split(':').map(Number);
+    return new Date(y, m - 1, d, hh, mm, 0);
+  }
+
+  function updateEtcPreview() {
+    const baseDt = getSelectedDateTime();
+    const mode = document.getElementById('timeMode').value;
+    const startDt = (mode === 'departure') ? baseDt : new Date(baseDt.getTime() - 30 * 60000);
+    const endDt = (mode === 'departure') ? new Date(baseDt.getTime() + 30 * 60000) : baseDt;
+    const res = evaluateEtcDiscount(startDt, endDt);
+    document.getElementById('etcPreviewBadge').innerText = `ETC判定: ${res.label}`;
   }
 
   function toggleWaypoint() {
@@ -971,7 +1149,14 @@ input, select {
     return {
       toll: totalToll,
       label: breakdownParts.length > 0 ? breakdownParts.join(' + ') : '有料区間なし',
-      discountText: hasNexco ? `(${discObj.shortLabel})` : '' }; }  function formatDuration(sec) { const h = Math.floor(sec / 3600); const m = Math.round((sec \% 3600) / 60); return h > 0 ? `${h}時間${m}分` : `${m}分`;
+      discountText: hasNexco ? `(${discObj.shortLabel})` : ''
+    };
+  }
+
+  function formatDuration(sec) {
+    const h = Math.floor(sec / 3600);
+    const m = Math.round((sec % 3600) / 60);
+    return h > 0 ? `${h}時間${m}分` : `${m}分`;
   }
 
   function formatHHMM(dateObj) {
@@ -1011,7 +1196,7 @@ input, select {
         );
         const lat = pos.coords.latitude.toFixed(5);
         const lng = pos.coords.longitude.toFixed(5);
-        origin = `📍現在地 (${lat},${lng})`;
+        origin = `📍現在地 (${lat}, ${lng})`;
         document.getElementById('origin').value = origin;
       } catch (e) {
         return alert('現在地の取得に失敗しました。位置情報の許可を確認してください。');
@@ -1052,7 +1237,66 @@ input, select {
     const hwTotal = hwGas + hwToll;
 
     const actualEtc = evaluateEtcDiscount(hwTimes.start, hwTimes.end);
-    document.getElementById('etcPreviewBadge').innerText = `ETC判定: ${actualEtc.label}`;  const loDist = localRoute.distanceMeters / 1000; const loSec = parseInt(localRoute.duration.replace('s', ''), 10); const loTimes = calcStartEndTime(baseDt, timeMode, loSec); const loGas = Math.round((loDist / eff) * gas); const loTotal = loGas;  let mixData = null; if (currentWaypoint) { const avoid1 = (currentSegmentMode === 'local_to_hw'); const avoid2 = (currentSegmentMode === 'hw_to_local');  const [leg1, leg2] = await Promise.all([ fetchRoute(origin, currentWaypoint, avoid1), fetchRoute(currentWaypoint, dest, avoid2) ]);  if (leg1 && leg2) { const dist1 = leg1.distanceMeters / 1000; const dist2 = leg2.distanceMeters / 1000; const totalDist = dist1 + dist2; const sec1 = parseInt(leg1.duration.replace('s', ''), 10); const sec2 = parseInt(leg2.duration.replace('s', ''), 10); const totalSec = sec1 + sec2; const mixTimes = calcStartEndTime(baseDt, timeMode, totalSec); const midTime = new Date(mixTimes.start.getTime() + sec1 * 1000);  const totalGas = Math.round((totalDist / eff) * gas); const tollObj1 = calculateOfficialToll(leg1, avoid1, mixTimes.start, midTime); const tollObj2 = calculateOfficialToll(leg2, avoid2, midTime, mixTimes.end); const totalToll = tollObj1.toll + tollObj2.toll; const grandTotal = totalGas + totalToll;  const activeTollObj = !avoid1 ? tollObj1 : tollObj2;  mixData = { dist: totalDist, sec: totalSec, timeText: mixTimes.text, gas: totalGas, toll: totalToll, label: activeTollObj.label, discountText: activeTollObj.discountText, total: grandTotal, leg1Type: avoid1 ? '下道' : '高速', leg2Type: avoid2 ? '下道' : '高速', poly1: leg1.polyline.encodedPolyline, poly2: leg2.polyline.encodedPolyline }; } }  if (!mixData) { const timeDiffMin = Math.round((loSec - hwSec) / 60); const costDiff = hwTotal - loTotal;  diffBanner.innerHTML = timeDiffMin > 0 ? `高速利用で ${timeDiffMin}分短縮（コスト差 ＋${costDiff.toLocaleString()}円）` : `一般道でも所要時間はほぼ同等（${Math.abs(costDiff).toLocaleString()}円コスト削減）`;
+    document.getElementById('etcPreviewBadge').innerText = `ETC判定: ${actualEtc.label}`;
+
+    const loDist = localRoute.distanceMeters / 1000;
+    const loSec = parseInt(localRoute.duration.replace('s', ''), 10);
+    const loTimes = calcStartEndTime(baseDt, timeMode, loSec);
+    const loGas = Math.round((loDist / eff) * gas);
+    const loTotal = loGas;
+
+    let mixData = null;
+    if (currentWaypoint) {
+      const avoid1 = (currentSegmentMode === 'local_to_hw');
+      const avoid2 = (currentSegmentMode === 'hw_to_local');
+
+      const [leg1, leg2] = await Promise.all([
+        fetchRoute(origin, currentWaypoint, avoid1),
+        fetchRoute(currentWaypoint, dest, avoid2)
+      ]);
+
+      if (leg1 && leg2) {
+        const dist1 = leg1.distanceMeters / 1000;
+        const dist2 = leg2.distanceMeters / 1000;
+        const totalDist = dist1 + dist2;
+        const sec1 = parseInt(leg1.duration.replace('s', ''), 10);
+        const sec2 = parseInt(leg2.duration.replace('s', ''), 10);
+        const totalSec = sec1 + sec2;
+        const mixTimes = calcStartEndTime(baseDt, timeMode, totalSec);
+        const midTime = new Date(mixTimes.start.getTime() + sec1 * 1000);
+
+        const totalGas = Math.round((totalDist / eff) * gas);
+        const tollObj1 = calculateOfficialToll(leg1, avoid1, mixTimes.start, midTime);
+        const tollObj2 = calculateOfficialToll(leg2, avoid2, midTime, mixTimes.end);
+        const totalToll = tollObj1.toll + tollObj2.toll;
+        const grandTotal = totalGas + totalToll;
+
+        const activeTollObj = !avoid1 ? tollObj1 : tollObj2;
+
+        mixData = {
+          dist: totalDist,
+          sec: totalSec,
+          timeText: mixTimes.text,
+          gas: totalGas,
+          toll: totalToll,
+          label: activeTollObj.label,
+          discountText: activeTollObj.discountText,
+          total: grandTotal,
+          leg1Type: avoid1 ? '下道' : '高速',
+          leg2Type: avoid2 ? '下道' : '高速',
+          poly1: leg1.polyline.encodedPolyline,
+          poly2: leg2.polyline.encodedPolyline
+        };
+      }
+    }
+
+    if (!mixData) {
+      const timeDiffMin = Math.round((loSec - hwSec) / 60);
+      const costDiff = hwTotal - loTotal;
+
+      diffBanner.innerHTML = timeDiffMin > 0
+        ? `高速利用で ${timeDiffMin}分短縮（コスト差 ＋${costDiff.toLocaleString()}円）`
+        : `一般道でも所要時間はほぼ同等（${Math.abs(costDiff).toLocaleString()}円コスト削減）`;
 
       compareGrid.className = 'compare-grid grid-2';
       compareGrid.innerHTML = `
@@ -1133,8 +1377,8 @@ input, select {
 
       navButtons.innerHTML = `
         <div class="nav-group-label">▼ ミックスルート 2段階ナビ開始</div>
-        <button class="btn-map" style="background:var(--orange);" onclick="openGoogleMapsLeg(1)">① 前半区間を開始（${dispOrig} ➔${currentWaypoint}）</button>
-        <button class="btn-map" style="background:var(--orange-dark);" onclick="openGoogleMapsLeg(2)">② 後半区間を開始（${currentWaypoint} ➔${dest}）</button>
+        <button class="btn-map" style="background:var(--orange);" onclick="openGoogleMapsLeg(1)">① 前半区間を開始（${dispOrig} ➔ ${currentWaypoint}）</button>
+        <button class="btn-map" style="background:var(--orange-dark);" onclick="openGoogleMapsLeg(2)">② 後半区間を開始（${currentWaypoint} ➔ ${dest}）</button>
         <div class="nav-group-label">▼ 通常ルート 一括ナビ開始</div>
         <button class="btn-map" onclick="openGoogleMapsNormal(false)">全高速優先でナビ開始</button>
         <button class="btn-map" style="background:var(--green);" onclick="openGoogleMapsNormal(true)">全下道優先でナビ開始</button>
@@ -1147,6 +1391,10 @@ input, select {
   function drawMap(polylines) {
     const mapDiv = document.getElementById('map');
     mapDiv.style.display = 'block';
+    if (typeof google === 'undefined' || !google.maps) {
+      mapDiv.innerHTML = '<div style="padding:20px; text-align:center; font-size:12px; color:#64748b;">地図の読み込み中またはAPI制限中です</div>';
+      return;
+    }
     const map = new google.maps.Map(mapDiv, { zoom: 11, center: { lat: 35.2523, lng: 136.8156 } });
     const bounds = new google.maps.LatLngBounds();
 
@@ -1182,6 +1430,16 @@ input, select {
     if (avoidTolls) url += `&avoid=tolls`;
     window.open(url, '_blank');
   }
+
+  // ページ読み込み完了時に即座に初期化を実行
+  (function initApp() {
+    const savedActive = localStorage.getItem(ACTIVE_PROFILE_KEY);
+    if (savedActive) activeProfileName = savedActive;
+    loadActiveProfile();
+    setNowDateTime();
+    syncHolidaysFromApi();
+  })();
 </script>
+<script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyA-4TpNpWbRZMvQKvm2oP2KPi50KIvdvSA&libraries=geometry"></script>
 </body>
 </html>
