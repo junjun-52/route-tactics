@@ -132,8 +132,10 @@
     margin-bottom: 4px;
     color: var(--text-sub);
   }
-  input, select {
+input, select {
     width: 100%;
+    max-width: 100%;
+    min-width: 0;
     padding: 9px 11px;
     border: 1px solid var(--border);
     border-radius: 4px;
@@ -153,6 +155,8 @@
   }
   .row div {
     flex: 1;
+    min-width: 0;
+  }
   }
   button {
     width: 100%;
@@ -830,13 +834,13 @@
     return parseCoordsFromText(text) ? "現在地" : text;
   }
 
-  window.onload = function() {
+  window.addEventListener('DOMContentLoaded', function() {
     const savedActive = localStorage.getItem(ACTIVE_PROFILE_KEY);
     if (savedActive) activeProfileName = savedActive;
     loadActiveProfile();
     setNowDateTime();
     syncHolidaysFromApi();
-  };
+  });
 
   function setNowDateTime() {
     const now = new Date();
