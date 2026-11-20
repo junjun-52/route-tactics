@@ -363,12 +363,12 @@
         <div id="places-editor" class="places-editor">
           <div class="field">
             <label for="place-home">自宅（ホーム）</label>
-            <input type="text" id="place-home" placeholder="例：愛知県稲沢市..." />
+            <input type="text" id="place-home" placeholder="例：住所や最寄り駅など" />
           </div>
           <div class="grid-2">
-            <div class="field"><label>登録地 1</label><input type="text" class="saved-place-input" value="名古屋駅" /></div>
-            <div class="field"><label>登録地 2</label><input type="text" class="saved-place-input" value="栄" /></div>
-            <div class="field"><label>登録地 3</label><input type="text" class="saved-place-input" value="セントレア" /></div>
+            <div class="field"><label>登録地 1</label><input type="text" class="saved-place-input" placeholder="任意" /></div>
+            <div class="field"><label>登録地 2</label><input type="text" class="saved-place-input" placeholder="任意" /></div>
+            <div class="field"><label>登録地 3</label><input type="text" class="saved-place-input" placeholder="任意" /></div>
             <div class="field"><label>登録地 4</label><input type="text" class="saved-place-input" placeholder="任意" /></div>
             <div class="field"><label>登録地 5</label><input type="text" class="saved-place-input" placeholder="任意" /></div>
           </div>
@@ -520,8 +520,13 @@
         mpgEl.value = data.mpg ?? 15.0;
         gasPriceEl.value = data.gasPrice ?? 157;
         homeEl.value = data.home ?? "";
-        const places = data.places || ["名古屋駅", "栄", "セントレア", "", ""];
+        const places = data.places || ["", "", "", "", ""];
         savedPlaceInputs.forEach((el, i) => { el.value = places[i] || ""; });
+      } else {
+        mpgEl.value = 15.0;
+        gasPriceEl.value = 157;
+        homeEl.value = "";
+        savedPlaceInputs.forEach(el => { el.value = ""; });
       }
       renderPlaceChips();
     }
