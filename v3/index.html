@@ -396,7 +396,7 @@
   .card.mix .price-big { color: var(--orange-dark); }
   .card.local .price-big { color: var(--green); }
 
-  /* V3: 高速詳細タイムライン */
+  /* V3: 高速詳細（乗降IC・料金切替・区間料金） */
   .hw-detail-wrap {
     margin-top: 12px;
     border: 1px solid var(--border);
@@ -460,6 +460,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 8px;
     font-size: 11px;
     font-weight: 800;
     color: var(--navy);
@@ -499,7 +500,6 @@
     box-shadow: 0 0 0 1px #cbd5e1;
   }
   .hw-event.entry .hw-event-dot { background: var(--green); }
-  .hw-event.jct .hw-event-dot { background: #2563eb; }
   .hw-event.toll .hw-event-dot { background: var(--orange); }
   .hw-event.exit .hw-event-dot { background: #dc2626; }
 
@@ -513,7 +513,6 @@
     vertical-align: middle;
   }
   .hw-badge.entry { background: #dcfce7; color: #166534; }
-  .hw-badge.jct { background: #dbeafe; color: #1e40af; }
   .hw-badge.toll { background: #ffedd5; color: #9a3412; }
   .hw-badge.exit { background: #fee2e2; color: #991b1b; }
 
@@ -521,6 +520,30 @@
     font-size: 10px;
     color: var(--text-sub);
     margin-top: 2px;
+  }
+  .hw-seg-price-box {
+    margin: 6px 0 8px 0;
+    padding: 6px 9px;
+    background: var(--orange-bg);
+    border: 1px dashed #f9cdb3;
+    border-radius: 4px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--navy);
+  }
+  .hw-seg-price-val {
+    color: var(--orange-dark);
+    font-size: 12px;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+  .hw-note {
+    font-size: 10px;
+    color: var(--text-sub);
+    margin-top: 6px;
   }
   .hw-empty {
     font-size: 11px;
@@ -712,10 +735,10 @@
       <div id="diffBanner" class="diff-banner"></div>
       <div class="compare-grid" id="compareGrid"></div>
 
-      <!-- V3: 高速詳細（乗降IC・JCT・料金切替） -->
+      <!-- V3: 高速詳細（最初/最後のIC・料金切替・区間別料金） -->
       <div id="hwDetailWrap" class="hw-detail-wrap" style="display:none;">
         <div class="hw-detail-header" onclick="toggleHwDetailBody()">
-          <span class="hw-detail-title">🛣️ 高速詳細（乗降IC・JCT・料金切替）</span>
+          <span class="hw-detail-title">🛣️ 高速詳細（乗降IC・料金切替・区間料金）</span>
           <span class="hw-detail-toggle" id="hwDetailToggleText">▲ 閉じる</span>
         </div>
         <div class="hw-detail-body" id="hwDetailBody"></div>
@@ -1196,14 +1219,16 @@
     };
   }
 
-  // ===== V3: ステップから乗降IC・JCT・料金切替を抽出 =====
-  function extractHighwayEvents(route) {
-    const events = [];
-    if (!route || !Array.isArray(route.legs)) return events;
+  // ===== V3: 「最初の入口IC」「料金切り替わり」「最後の出口IC」のみ抽出 =====
+  function extractKeyHighwayPoints(route) {
+    const rawEntries = [];
+    const rawTolls = [];
+    const rawExits = [];
+    if (!route || !Array.isArray(route.legs)) return [];
 
     let cumDistM = 0;
     let cumSec = 0;
-    const hwKeywordRe = /(高速|自動車道|有料道路|有料区間|IC|ＩＣ|インター|JCT|ＪＣＴ|ジャンクション|ランプ|スマートIC|名二環|伊勢湾岸|東名|名神|中央道|北陸道|関越|東北道|常磐道|山陽道|中国道|九州道|新東名|新名神|圏央道|外環|首都高|阪神高速|名古屋高速|知多半島道路|セントレアライン|東海環状|東海北陸|紀勢|名阪|京奈和|阪和|西名阪|近畿道|第二京阪)/i;
+    const hwKeywordRe = /(高速|自動車道|有料道路|有料区間|IC|ＩＣ|インター|ランプ|スマートIC|名二環|伊勢湾岸|東名|名神|中央道|北陸道|関越|東北道|常磐道|山陽道|中国道|九州道|新東名|新名神|圏央道|外環|首都高|阪神高速|名古屋高速|知多半島道路|セントレアライン|東海環状|東海北陸|紀勢|名阪|京奈和|阪和|西名阪|近畿道|第二京阪)/i;
 
     for (const leg of route.legs) {
       const steps = leg.steps || [];
@@ -1215,62 +1240,117 @@
         const sec = parseInt((step.staticDuration || "0s").replace("s", ""), 10) || 0;
 
         if (inst) {
-          let type = null;
-          let badgeText = "";
+          const pointBase = {
+            text: inst,
+            distM: cumDistM,
+            atKm: (cumDistM / 1000).toFixed(1),
+            atMin: Math.round(cumSec / 60)
+          };
 
           const isToll = /(料金所|本線料金所|有料区間|有料道路|ETC)/i.test(inst);
           const isExit = maneuver.includes("OFF_RAMP") || (/(出口|降り|出る|流出)/.test(inst) && hwKeywordRe.test(inst));
-          const isJct = /(JCT|ＪＣＴ|ジャンクション)/.test(inst) || ((maneuver.includes("FORK") || /分岐|方面/.test(inst)) && hwKeywordRe.test(inst) && !/(ランプ|入口)/.test(inst));
-          const isEntry = (maneuver === "MERGE" || maneuver.includes("RAMP_")) && hwKeywordRe.test(inst) && !isExit
+          const isEntry = ((maneuver === "MERGE" || maneuver.includes("RAMP_")) && hwKeywordRe.test(inst) && !isExit)
             || (/(入口|ランプ|に入る|合流)/.test(inst) && hwKeywordRe.test(inst) && !isExit);
 
-          if (isExit) {
-            type = "exit";
-            badgeText = "出口IC";
-          } else if (isJct) {
-            type = "jct";
-            badgeText = "JCT・分岐";
-          } else if (isToll && !isEntry) {
-            type = "toll";
-            badgeText = "料金・有料";
-          } else if (isEntry) {
-            type = "entry";
-            badgeText = "入口IC";
-          }
-
-          if (type) {
-            events.push({
-              type,
-              badgeText,
-              text: inst,
-              atKm: (cumDistM / 1000).toFixed(1),
-              atMin: Math.round(cumSec / 60),
-              stepKm: (distM / 1000).toFixed(1)
-            });
-          }
+          if (isEntry) rawEntries.push({ ...pointBase, type: "entry", badgeText: "最初の入口IC" });
+          if (isToll && !isEntry && !isExit) rawTolls.push({ ...pointBase, type: "toll", badgeText: "料金切替" });
+          if (isExit) rawExits.push({ ...pointBase, type: "exit", badgeText: "最後の出口IC" });
         }
 
         cumDistM += distM;
         cumSec += sec;
       }
     }
-    return events;
+
+    const result = [];
+    const firstEntry = rawEntries.length > 0 ? rawEntries[0] : null;
+    const lastExit = rawExits.length > 0 ? rawExits[rawExits.length - 1] : null;
+
+    if (firstEntry) result.push(firstEntry);
+
+    // 最初と最後の間に位置する料金切り替わりのみ追加
+    const minM = firstEntry ? firstEntry.distM : -1;
+    const maxM = lastExit ? lastExit.distM : Number.MAX_SAFE_INTEGER;
+    rawTolls.forEach(t => {
+      if (t.distM > minM && t.distM < maxM) {
+        result.push(t);
+      }
+    });
+
+    if (lastExit) result.push(lastExit);
+    return result;
   }
 
-  function buildTimelineHtml(events) {
-    if (!events || events.length === 0) {
-      return `<div class="hw-empty">高速道路・有料道路の乗降ICやJCTの案内は検出されませんでした。</div>`;
+  // ===== V3: タイムライン＋区間ごとの料金内訳HTMLを生成 =====
+  function buildTollBreakdownHtml(points, totalTollYen) {
+    if (!points || points.length === 0) {
+      return totalTollYen > 0
+        ? `<div class="hw-seg-price-box"><span>有料区間（ETC合計）</span><span class="hw-seg-price-val">${totalTollYen.toLocaleString()}円</span></div>`
+        : `<div class="hw-empty">高速道路・有料道路の乗降ICや料金切替は検出されませんでした。</div>`;
     }
-    const items = events.map(ev => `
-      <div class="hw-event ${ev.type}">
-        <span class="hw-event-dot"></span>
-        <div>
-          <span class="hw-badge ${ev.type}">${ev.badgeText}</span>${escapeHtml(ev.text)}
+
+    // ポイント間の区間距離を算出
+    const segCount = Math.max(points.length - 1, 0);
+    let segPrices = [];
+
+    if (segCount === 1) {
+      segPrices = [totalTollYen];
+    } else if (segCount > 1 && totalTollYen > 0) {
+      const segDists = [];
+      let sumDist = 0;
+      for (let i = 0; i < segCount; i++) {
+        const d = Math.max(points[i + 1].distM - points[i].distM, 100);
+        segDists.push(d);
+        sumDist += d;
+      }
+      let allocated = 0;
+      for (let i = 0; i < segCount; i++) {
+        if (i === segCount - 1) {
+          segPrices.push(Math.max(totalTollYen - allocated, 0));
+        } else {
+          // 10円単位に丸めて配分
+          const p = Math.round(((totalTollYen * segDists[i]) / sumDist) / 10) * 10;
+          segPrices.push(p);
+          allocated += p;
+        }
+      }
+    }
+
+    let html = '<div class="hw-timeline">';
+    for (let i = 0; i < points.length; i++) {
+      const ev = points[i];
+      html += `
+        <div class="hw-event ${ev.type}">
+          <span class="hw-event-dot"></span>
+          <div>
+            <span class="hw-badge ${ev.type}">${ev.badgeText}</span>${escapeHtml(ev.text)}
+          </div>
+          <div class="hw-event-meta">出発から約 ${ev.atKm}km（約${ev.atMin}分地点）</div>
         </div>
-        <div class="hw-event-meta">出発から約 ${ev.atKm}km（約${ev.atMin}分地点）</div>
-      </div>
-    `).join('');
-    return `<div class="hw-timeline">${items}</div>`;
+      `;
+
+      // 次のポイントとの間に区間料金を表示
+      if (i < points.length - 1) {
+        const nextEv = points[i + 1];
+        const segKm = Math.max((nextEv.distM - ev.distM) / 1000, 0).toFixed(1);
+        const price = segPrices[i] || 0;
+        const priceLabel = (segCount === 1)
+          ? `ETC料金: ${price.toLocaleString()}円`
+          : `区間目安: 約${price.toLocaleString()}円`;
+        html += `
+          <div class="hw-seg-price-box">
+            <span>▼ 有料区間${i + 1}（約 ${segKm}km）</span>
+            <span class="hw-seg-price-val">${priceLabel}</span>
+          </div>
+        `;
+      }
+    }
+    html += '</div>';
+
+    if (segCount > 1 && totalTollYen > 0) {
+      html += `<div class="hw-note">※Google APIの仕様上、1ルート内の複数料金切替は距離比率による区間目安を表示しています（合算＝API実測ETC合計 ${totalTollYen.toLocaleString()}円）。</div>`;
+    }
+    return html;
   }
 
   function toggleHwDetailBody() {
@@ -1391,15 +1471,15 @@
     const loGas = Math.round((loDist / eff) * gas);
     const loTotal = loGas;
 
-    // 全高速ルートの詳細HTML生成
-    const hwEvents = extractHighwayEvents(hwRoute);
+    // 全高速ルートの詳細HTML生成（最初/最後のIC＋料金切替＋区間料金）
+    const hwPoints = extractKeyHighwayPoints(hwRoute);
     latestHwDetailHtml = `
       <div class="hw-leg-block">
         <div class="hw-leg-head">
           <span>${escapeHtml(formatDisplayOrigin(origin))} ➔ ${escapeHtml(dest)}</span>
-          <span class="hw-leg-toll">ETC料金: ${hwToll.toLocaleString()}円</span>
+          <span class="hw-leg-toll">ETC合計: ${hwToll.toLocaleString()}円</span>
         </div>
-        ${buildTimelineHtml(hwEvents)}
+        ${buildTollBreakdownHtml(hwPoints, hwToll)}
       </div>
     `;
     latestMixDetailHtml = "";
@@ -1447,7 +1527,7 @@
         modeLabels.push(leg.avoidTolls ? '下道' : '高速');
 
         const modeTag = leg.avoidTolls ? '下道' : '高速';
-        const legEvents = leg.avoidTolls ? [] : extractHighwayEvents(route);
+        const legPoints = leg.avoidTolls ? [] : extractKeyHighwayPoints(route);
         mixLegDetailBlocks.push(`
           <div class="hw-leg-block">
             <div class="hw-leg-head">
@@ -1455,8 +1535,8 @@
               <span class="hw-leg-toll">${leg.avoidTolls ? '0円' : `ETC: ${tObj.toll.toLocaleString()}円`}</span>
             </div>
             ${leg.avoidTolls
-              ? `<div class="hw-empty">一般道区間（${d.toFixed(1)}km / ${formatDuration(s)}）</div>`
-              : buildTimelineHtml(legEvents)}
+              ? `<div class="hw-empty">一般道区間（${d.toFixed(1)}km / ${formatDuration(s)} / 高速料金 0円）</div>`
+              : buildTollBreakdownHtml(legPoints, tObj.toll)}
           </div>
         `);
       }
