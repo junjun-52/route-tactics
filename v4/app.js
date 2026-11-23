@@ -345,15 +345,12 @@ async function calculateAll() {
   const loGas = Math.round((loDist / eff) * gas);
   const loTotal = loGas;
 
-  // 全高速ルートの詳細HTML生成
-  const hwEvents = extractHighwayEvents(hwRoute);
+  // 全高速ルートの詳細HTML生成（総額は上部カードに表示済みのため区間内訳のみ）
+  const hwTimelineItems = extractHighwayTimeline(hwRoute, hwToll);
   latestHwDetailHtml = `
     <div class="hw-leg-block">
-      <div class="hw-leg-head">
-        <span>${escapeHtml(formatDisplayOrigin(origin))} ➔ ${escapeHtml(dest)}</span>
-        <span class="hw-leg-toll">ETC料金: ${hwToll.toLocaleString()}円</span>
-      </div>
-      ${buildTimelineHtml(hwEvents)}
+      <div class="hw-leg-head">${escapeHtml(formatDisplayOrigin(origin))} ➔ ${escapeHtml(dest)}</div>
+      ${buildTimelineHtml(hwTimelineItems)}
     </div>
   `;
   latestMixDetailHtml = "";
@@ -401,16 +398,13 @@ async function calculateAll() {
       modeLabels.push(leg.avoidTolls ? '下道' : '高速');
 
       const modeTag = leg.avoidTolls ? '下道' : '高速';
-      const legEvents = leg.avoidTolls ? [] : extractHighwayEvents(route);
+      const legItems = leg.avoidTolls ? [] : extractHighwayTimeline(route, tObj.toll);
       mixLegDetailBlocks.push(`
         <div class="hw-leg-block">
-          <div class="hw-leg-head">
-            <span>区間${i + 1} [${modeTag}]：${escapeHtml(formatDisplayOrigin(leg.from))} ➔ ${escapeHtml(formatDisplayOrigin(leg.to))}</span>
-            <span class="hw-leg-toll">${leg.avoidTolls ? '0円' : `ETC: ${tObj.toll.toLocaleString()}円`}</span>
-          </div>
+          <div class="hw-leg-head">区間${i + 1} [${modeTag}]：${escapeHtml(formatDisplayOrigin(leg.from))} ➔ ${escapeHtml(formatDisplayOrigin(leg.to))}</div>
           ${leg.avoidTolls
             ? `<div class="hw-empty">一般道区間（${d.toFixed(1)}km / ${formatDuration(s)}）</div>`
-            : buildTimelineHtml(legEvents)}
+            : buildTimelineHtml(legItems)}
         </div>
       `);
     }
