@@ -2,15 +2,12 @@
 let latestHwDetailHtml = "";
 let latestMixDetailHtml = "";
 
-const ROAD_NAME_RE = /([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:自動車道|高速道路|有料道路|高速[0-9０-９号線]*|名二環|伊勢湾岸|セントレアライン|知多半島道路|東海環状|東海北陸|東名|名神|新東名|新名神|中央道|北陸道|首都高|阪神高速|名古屋高速))/;
+const ROAD_NAME_RE = /([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:自動車道|高速道路|有料道路|高速[0-9０-９号線]*|名二環|伊勢湾岸|セントレアライン|知多半島道路|東海環状|東海北陸|東名|名神|新東名|新名神|中央道|北陸道|首都高|阪神高速|名古屋高速))/g;
 
 function extractFacilityName(inst) {
-  // 「〇〇 方面の」という進行方向表記を除去してから判定
-  const cleaned = inst.replace(/[^\s\/（）()]+?\s*方面の\s*/g, "");
-
-  // 1. 明示的なIC・JCT・料金所・出入口名を最優先で抽出
+  // 1. 「〇〇IC 方面のランプ」も含め、明示的なIC・JCT・料金所・出入口名を最優先で抽出
   const explicitRe = /([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:スマートIC|スマートＩＣ|IC|ＩＣ|JCT|ＪＣＴ|本線料金所|料金所|出入口))/g;
-  const explicitMatches = cleaned.match(explicitRe);
+  const explicitMatches = inst.match(explicitRe);
   if (explicitMatches) {
     return { name: explicitMatches[0], isRoad: false };
   }
@@ -18,20 +15,21 @@ function extractFacilityName(inst) {
   // 2. 「黒川 出口」「一宮 入口」のようにスペース有無を含む固有名＋入口/出口を抽出
   const ioRe = /([一-龠ァ-ヶーA-Za-z0-9０-９]{2,15})\s*(入口|出口)/g;
   let m;
-  while ((m = ioRe.exec(cleaned)) !== null) {
+  while ((m = ioRe.exec(inst)) !== null) {
     const prefix = m[1];
     // 助詞や一般語（「方面」「のランプ」など）は除外
     if (/(?:の|を|に|へ|方面|ランプ|車線|方向|右側|左側)$/.test(prefix)) continue;
-    if (ROAD_NAME_RE.test(prefix)) {
+    if (new RegExp(ROAD_NAME_RE.source).test(prefix)) {
       return { name: prefix, isRoad: true };
     }
     return { name: `${prefix}${m[2]}`, isRoad: false };
   }
 
   // 3. IC名が案内文に含まれない場合は有料道路・路線名を抽出
-  const roadMatch = cleaned.match(ROAD_NAME_RE);
-  if (roadMatch) {
-    return { name: roadMatch[1], isRoad: true };
+  const roadMatches = inst.match(ROAD_NAME_RE);
+  if (roadMatches && roadMatches.length > 0) {
+    // 「A 方面の B のランプ」のように2つある場合は進入先のB（最後）を優先
+    return { name: roadMatches[roadMatches.length - 1], isRoad: true };
   }
 
   return null;
