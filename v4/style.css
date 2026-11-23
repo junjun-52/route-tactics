@@ -394,6 +394,22 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   padding: 3px 0;
   border-bottom: 1px dashed #eef1f5;
 }
+.metric-row.roi-row {
+  background: #f8fafc;
+  padding: 4px 5px;
+  margin: 2px -5px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.roi-good {
+  color: var(--green);
+}
+.roi-warn {
+  color: var(--orange-dark);
+}
+.roi-bad {
+  color: #dc2626;
+}
 .sub-info {
   font-size: 10px;
   color: var(--text-sub);
