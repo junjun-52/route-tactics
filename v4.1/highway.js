@@ -1,4 +1,4 @@
-// ===== 有料区間の入口IC・出口IC・区間別ETC料金タイムライン (V4.1.4) =====
+// ===== 有料区間の入口IC・出口IC・区間別ETC料金タイムライン (V4.1.5) =====
 let latestHwDetailHtml = "";
 let latestMixDetailHtml = "";
 
@@ -117,9 +117,10 @@ function cleanAndValidateFacility(rawName, role, allowBareName = false) {
   if (!rawName) return null;
   let name = String(rawName).replace(/\s+/g, "").replace(/ＩＣ/g, "IC").replace(/ＪＣＴ/g, "JCT")
     .replace(/インターチェンジ/g, "IC").replace(/ジャンクション/g, "JCT")
-    .replace(/^(?:名古屋高速[0-9号一宮線小牧線清須線都心環状線大高線東山線万場線楠線黒川線東海線]*|首都高速[0-9号渋谷線新宿線池袋線上野線向島線深川線台場線湾岸線都心環状線]*|阪神高速[0-9号線]*|東名高速道路|名神高速道路|新東名高速道路|名古屋第二環状自動車道|伊勢湾岸自動車道|東海北陸自動車道|知多半島道路|セントレアライン|中部国際空港連絡道路)/, "");
+    .replace(/^(?:名古屋高速[0-9号一宮線小牧線清須線都心環状線大高線東山線万場線楠線黒川線東海線]*|首都高速[0-9号渋谷線新宿線池袋線上野線向島線深川線台場線湾岸線都心環状線]*|阪神高速[0-9号線]*|東名高速道路|名神高速道路|新東名高速道路|名古屋第二環状自動車道|伊勢湾岸自動車道|東海北陸自動車道|知多半島道路|セントレアライン|中部国際空港連絡道路)/, "")
+    .replace(/[（(][^）)]*[）)]/g, "");
   if (!name || name.length < 2 || name.length > 18) return null;
-  if (/^(入口|出口|出入口|料金所|IC|JCT|ランプ)$/.test(name) || /(駐車場|ビル|公園|駅|店|病院|ホテル)/.test(name)) return null;
+  if (/^(入口|出口|出入口|料金所|IC|JCT|ランプ|本線|上り|下り)$/.test(name) || /(駐車場|ビル|公園|駅|店|病院|ホテル|ターミナル)/.test(name)) return null;
   if (role === "entry" && /出口$/.test(name) && !/出入口$/.test(name)) return null;
   if (role === "exit" && /入口$/.test(name) && !/出入口$/.test(name)) return null;
   if (/(スマートIC|IC|JCT|入口|出口|出入口|料金所|ランプ)/.test(name)) return name;
@@ -129,7 +130,7 @@ function cleanAndValidateFacility(rawName, role, allowBareName = false) {
   return null;
 }
 
-async function searchOsmMotorwayJunction(lat, lng, role, radiusM = 1200) {
+async function searchOsmMotorwayJunction(lat, lng, role, radiusM = 1400) {
   try {
     const q = `[out:json][timeout:6];(node["highway"="motorway_junction"]["name"](around:${radiusM},${lat},${lng});way["highway"="motorway_link"]["name"](around:${radiusM},${lat},${lng});node["barrier"="toll_booth"]["name"](around:${radiusM},${lat},${lng}););out center;`;
     const res = await fetch("https://overpass-api.de/api/interpreter", {
@@ -145,7 +146,7 @@ async function searchOsmMotorwayJunction(lat, lng, role, radiusM = 1200) {
       const valid = cleanAndValidateFacility(el.tags?.name || el.tags?.["name:ja"] || "", role, true);
       if (!valid) continue;
       const dist = calcNodeDistMeters(lat, lng, eLat, eLon);
-      const score = (role !== "switch" && /JCT$/.test(valid)) ? dist + 2000 : dist;
+      const score = (role !== "switch" && /JCT$/.test(valid)) ? dist + 2500 : dist;
       candidates.push({ name: valid, score });
     }
     candidates.sort((a, b) => a.score - b.score);
@@ -153,16 +154,17 @@ async function searchOsmMotorwayJunction(lat, lng, role, radiusM = 1200) {
   } catch (e) { return null; }
 }
 
-async function searchTomtomFacility(lat, lng, role, roadHint = "") {
+async function searchTomtomFacility(coordList, role, roadHint = "") {
   const ttKey = (typeof getTomtomApiKey === "function") ? getTomtomApiKey() : "";
-  if (!ttKey) return null;
+  if (!ttKey || !coordList.length) return null;
   const kwMap = { entry: ["出入口", "IC", "料金所"], exit: ["出入口", "IC", "出口"], switch: ["JCT", "料金所", "IC"] };
   const keywords = [...(roadHint ? [roadHint] : []), ...(kwMap[role] || ["IC", "JCT"])];
+  const center = coordList[0];
   try {
     const [revData, ...sDatas] = await Promise.all([
-      fetch(`https://api.tomtom.com/search/2/reverseGeocode/${lat},${lng}.json?key=${encodeURIComponent(ttKey)}&language=ja-JP&radius=350`).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`https://api.tomtom.com/search/2/reverseGeocode/${center.latitude},${center.longitude}.json?key=${encodeURIComponent(ttKey)}&language=ja-JP&radius=400`).then(r => r.ok ? r.json() : null).catch(() => null),
       ...keywords.map(kw =>
-        fetch(`https://api.tomtom.com/search/2/search/${encodeURIComponent(kw)}.json?key=${encodeURIComponent(ttKey)}&lat=${lat}&lon=${lng}&radius=1500&limit=15&language=ja-JP`).then(r => r.ok ? r.json() : null).catch(() => null)
+        fetch(`https://api.tomtom.com/search/2/search/${encodeURIComponent(kw)}.json?key=${encodeURIComponent(ttKey)}&lat=${center.latitude}&lon=${center.longitude}&radius=1600&limit=15&language=ja-JP`).then(r => r.ok ? r.json() : null).catch(() => null)
       )
     ]);
     let best = null;
@@ -189,8 +191,8 @@ async function lookupNearestFacilityByCoords(coordList, role, roadHint = "") {
   const coords = (Array.isArray(coordList) ? coordList : [coordList]).filter(c => c && typeof c.latitude === "number");
   if (!coords.length) return null;
   const [osmHits, ttHit] = await Promise.all([
-    Promise.all(coords.map(c => searchOsmMotorwayJunction(c.latitude, c.longitude, role, 1200))),
-    searchTomtomFacility(coords[0].latitude, coords[0].longitude, role, roadHint)
+    Promise.all(coords.slice(0, 3).map(c => searchOsmMotorwayJunction(c.latitude, c.longitude, role, 1400))),
+    searchTomtomFacility(coords, role, roadHint)
   ]);
   return osmHits.find(Boolean) || ttHit || null;
 }
@@ -273,7 +275,9 @@ function extractHighwayTimeline(route, legToll) {
           items.push({
             kind: "node", type: "exit", badgeText: "出口",
             name: exitName || (currentRoad ? `${currentRoad}（流出IC）` : "有料区間出口"),
-            needsLookup: !exitName, coordCandidates: [getCoordsAtDistance(cumPath, Math.max(0, stepStartDist - prevDist)), stepLatLng], roadHint: currentRoad
+            needsLookup: !exitName,
+            coordCandidates: [getCoordsAtDistance(cumPath, Math.max(0, stepStartDist - prevDist)), getCoordsAtDistance(cumPath, Math.max(0, stepStartDist - 350)), stepLatLng].filter(Boolean),
+            roadHint: currentRoad
           });
         }
         inToll = false; exitingToll = false; currentSeg = null; lastEndedSeg = null; currentOperator = null; currentRoad = "";
@@ -295,7 +299,11 @@ function extractHighwayTimeline(route, legToll) {
       if (!inToll) {
         inToll = true; currentRoad = effectiveRoad; currentOperator = stepOp;
         let entryName = extractFacilityName(inst, "entry");
-        const coordCandidates = [stepLatLng];
+        const coordCandidates = [
+          getCoordsAtDistance(cumPath, Math.max(0, stepStartDist - 250)),
+          stepLatLng,
+          getCoordsAtDistance(cumPath, stepStartDist + 350)
+        ].filter(Boolean);
         if (i > 0) {
           const prevStep = steps[i - 1], prevInst = (prevStep?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim(), prevDist = prevStep?.distanceMeters || 0;
           if (!entryName) entryName = extractFacilityName(prevInst, "entry");
@@ -327,7 +335,7 @@ function extractHighwayTimeline(route, legToll) {
         items.push({
           kind: "node", type: "switch", badgeText: "切替",
           name: pointName ? `${pointName}（${opTransition}）` : opTransition,
-          needsLookup: !pointName, coordCandidates: [stepLatLng, getCoordsAtDistance(cumPath, stepStartDist + Math.min(distM, 400))], roadHint: nextRoad, switchTransition: opTransition
+          needsLookup: !pointName, coordCandidates: [stepLatLng, getCoordsAtDistance(cumPath, stepStartDist + Math.min(distM, 400))].filter(Boolean), roadHint: nextRoad, switchTransition: opTransition
         });
         currentOperator = nextOp; currentRoad = nextRoad;
         startNewSegment(nextRoad, nextOp);
@@ -346,19 +354,18 @@ function extractHighwayTimeline(route, legToll) {
         items.push({
           kind: "node", type: "exit", badgeText: "出口",
           name: exitName || (effectiveRoad ? `${effectiveRoad}（流出IC）` : "有料区間出口"),
-          needsLookup: !exitName, coordCandidates: [stepLatLng, getCoordsAtDistance(cumPath, cumDistM)], roadHint: effectiveRoad
+          needsLookup: !exitName, coordCandidates: [stepLatLng, getCoordsAtDistance(cumPath, cumDistM)].filter(Boolean), roadHint: effectiveRoad
         });
         lastEndedSeg = currentSeg; currentSeg = null; inToll = false; exitingToll = true; currentOperator = null; currentRoad = "";
       }
     }
 
-    // 有料道路直結のまま目的地に到着した場合の最終「出口」補完
     if (inToll) {
       const lastStep = steps[steps.length - 1];
       const lastInst = (lastStep?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim();
       const exitName = extractFacilityName(lastInst, "exit");
       const endCoord = leg.endLocation?.latLng || getCoordsAtDistance(cumPath, cumDistM);
-      const nearExitCoord = getCoordsAtDistance(cumPath, Math.max(0, cumDistM - 650));
+      const nearExitCoord = getCoordsAtDistance(cumPath, Math.max(0, cumDistM - 700));
       items.push({
         kind: "node", type: "exit", badgeText: "出口",
         name: exitName || (currentRoad ? `${currentRoad}（流出IC）` : "有料区間出口"),
