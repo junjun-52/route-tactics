@@ -4,6 +4,17 @@ let latestMixDetailHtml = "";
 
 const ROAD_NAME_RE = /([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:自動車道|高速道路|有料道路|高速[0-9０-９号線]*|名二環|伊勢湾岸|セントレアライン|知多半島道路|知多横断道路|南知多道路|東海環状|東海北陸|東名|名神|新東名|新名神|中央道|北陸道|関越|東北道|常磐道|山陽道|中国道|九州道|圏央道|外環|首都高|阪神高速|名古屋高速|福岡高速|北九州高速|広島高速))/g;
 
+const OPERATOR_LABELS = {
+  urban_nagoya: "名古屋高速",
+  urban_tokyo: "首都高速",
+  urban_hanshin: "阪神高速",
+  urban_fukuoka: "福岡・北九州高速",
+  urban_hiroshima: "広島高速",
+  public_aichi: "知多半島・セントレアライン",
+  honshi: "本四高速",
+  nexco: "NEXCO高速"
+};
+
 function detectTollOperator(roadName) {
   if (!roadName) return null;
   if (/名古屋高速/.test(roadName)) return "urban_nagoya";
@@ -16,30 +27,50 @@ function detectTollOperator(roadName) {
   return "nexco";
 }
 
-function extractFacilityInfo(inst) {
-  // 1. 明示的なIC・料金所・出入口名を最優先で抽出（JCTは除外）
-  const explicitRe = /([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:スマートIC|スマートＩＣ|IC|ＩＣ|本線料金所|料金所|出入口))/g;
+// 案内文から「〇〇 方面の」を除いた実際に走行する路線名を抽出
+function extractDrivingRoad(inst) {
+  const withoutDir = inst.replace(/[^\s\/（）()]+?\s*方面の\s*/g, "");
+  const matches = withoutDir.match(ROAD_NAME_RE);
+  if (matches && matches.length > 0) {
+    return matches[matches.length - 1];
+  }
+  const fallback = inst.match(ROAD_NAME_RE);
+  return (fallback && fallback.length > 0) ? fallback[fallback.length - 1] : "";
+}
+
+// IC名・出入口名・料金所名を抽出（JCTは除外）
+function extractFacilityName(inst, mode) {
+  if (!inst) return null;
+
+  // 1. 明示的なIC・スマートIC・料金所・出入口名を最優先（JCTは除外）
+  const explicitRe = /([一-龠ァ-ヶーA-Za-z0-9０-９]{2,15}?(?:スマートIC|スマートＩＣ|IC|ＩＣ|本線料金所|料金所|出入口))/g;
   const explicitMatches = inst.match(explicitRe);
   if (explicitMatches) {
-    return { name: explicitMatches[0], isRoad: false, isTollGate: /料金所/.test(explicitMatches[0]) };
+    for (const m of explicitMatches) {
+      if (/^(料金所|出入口)$/.test(m)) continue;
+      return m;
+    }
   }
 
-  // 2. 「黒川 出口」「一宮 入口」のようにスペース有無を含む固有名＋入口/出口を抽出
+  // 2. 「黒川 出口」「一宮中 入口」のようにスペース有無を含む固有名＋入口/出口
   const ioRe = /([一-龠ァ-ヶーA-Za-z0-9０-９]{2,15})\s*(入口|出口)/g;
   let m;
   while ((m = ioRe.exec(inst)) !== null) {
     const prefix = m[1];
-    if (/(?:の|を|に|へ|方面|ランプ|車線|方向|右側|左側)$/.test(prefix)) continue;
-    if (new RegExp(ROAD_NAME_RE.source).test(prefix)) {
-      return { name: prefix, isRoad: true, isTollGate: false };
-    }
-    return { name: `${prefix}${m[2]}`, isRoad: false, isTollGate: false };
+    if (/(?:の|を|に|へ|から|まで|方面|ランプ|車線|方向|右側|左側|有料区間|有料道路)$/.test(prefix)) continue;
+    if (new RegExp(ROAD_NAME_RE.source).test(prefix)) continue;
+    return `${prefix}${m[2]}`;
   }
 
-  // 3. IC名が案内文に含まれない場合は有料道路・路線名を抽出
-  const roadMatches = inst.match(ROAD_NAME_RE);
-  if (roadMatches && roadMatches.length > 0) {
-    return { name: roadMatches[roadMatches.length - 1], isRoad: true, isTollGate: false };
+  // 3. 出口案内で「出口を 浜松 方面の〜」のように方面名しか出ない場合の補完
+  if (mode === "exit") {
+    const exitDir = inst.match(/出口を\s*([一-龠ァ-ヶーA-Za-z0-9０-９]{2,12}?)\s*方面/);
+    if (exitDir) {
+      const place = exitDir[1];
+      if (!new RegExp(ROAD_NAME_RE.source).test(place) && !/^(市街|方面|国道|県道)/.test(place)) {
+        return `${place}出口`;
+      }
+    }
   }
 
   return null;
@@ -91,6 +122,7 @@ function extractHighwayTimeline(route, legToll) {
 
   const segments = [];
   let currentSeg = null;
+  let lastEndedSeg = null;
   let currentOperator = null;
   let currentRoad = "";
 
@@ -118,7 +150,7 @@ function extractHighwayTimeline(route, legToll) {
   for (const leg of route.legs) {
     const steps = leg.steps || [];
     let inToll = false;
-    let justExited = false;
+    let exitingToll = false;
 
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
@@ -130,41 +162,49 @@ function extractHighwayTimeline(route, legToll) {
 
       if (!isTollStep) {
         inToll = false;
-        justExited = false;
+        exitingToll = false;
         currentSeg = null;
+        lastEndedSeg = null;
         currentOperator = null;
         currentRoad = "";
         continue;
       }
 
-      const info = extractFacilityInfo(inst);
-      const name = info ? info.name : null;
-      const isRoad = info ? info.isRoad : false;
-      const isTollGate = (info && info.isTollGate) || /本線料金所/.test(inst);
+      const stepRoad = extractDrivingRoad(inst) || currentRoad;
+      const stepOp = detectTollOperator(stepRoad) || currentOperator || "nexco";
+      const isTollGate = /本線料金所|料金所/.test(inst);
       const isExit = maneuver.includes("OFF_RAMP") || /出口を|出口へ|降りる|出る/.test(inst);
 
-      // 路線名と事業者の更新
-      const roadMatches = inst.match(ROAD_NAME_RE);
-      const stepRoad = (roadMatches && roadMatches.length > 0) ? roadMatches[roadMatches.length - 1] : currentRoad;
-      const stepOp = detectTollOperator(stepRoad) || currentOperator || "nexco";
-
-      // 出口ICを通過した直後の一般道接続ステップは無視
-      if (justExited) {
-        const isNewEntry = name && !/国道|県道|市道/.test(inst) && (/入口|に入る|合流/.test(inst) || isRoad);
-        if (!isNewEntry) continue;
-        justExited = false;
+      // 出口ICを通過した直後のランプ・出口料金所ステップは直前区間に吸収（ゴースト区間防止）
+      if (exitingToll) {
+        const isReEntry = /入口|に入る|合流/.test(inst) && !isExit && !isTollGate && !/国道|県道|市道/.test(inst);
+        if (!isReEntry) {
+          if (lastEndedSeg) {
+            lastEndedSeg.distM += distM;
+            lastEndedSeg.sec += sec;
+          }
+          continue;
+        }
+        exitingToll = false;
       }
 
-      // ① 有料区間の入口
+      // ① 有料区間の入口（現在のステップ or 直前のアプローチ案内からIC名を探索）
       if (!inToll) {
         inToll = true;
         currentRoad = stepRoad;
         currentOperator = stepOp;
+
+        let entryName = extractFacilityName(inst, "entry");
+        if (!entryName && i > 0) {
+          const prevInst = (steps[i - 1]?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim();
+          entryName = extractFacilityName(prevInst, "entry");
+        }
+
         items.push({
           kind: "node",
           type: "entry",
           badgeText: "入口",
-          name: name || stepRoad || "有料区間入口"
+          name: entryName || (stepRoad ? `${stepRoad} 入口` : "有料区間入口")
         });
         startNewSegment(stepRoad, stepOp);
         currentSeg.distM += distM;
@@ -172,10 +212,15 @@ function extractHighwayTimeline(route, legToll) {
         continue;
       }
 
-      // ② 事業者が変わる乗り継ぎ（例：名古屋高速 ➔ 名二環・東名）
+      // ② 料金体系（事業者）が変わる乗り継ぎ または 本線料金所
       const isOperatorSwitch = currentOperator && stepOp && currentOperator !== stepOp;
-      if (isOperatorSwitch || isTollGate) {
-        const switchLabel = (!isRoad && name) ? name : (stepRoad || "料金切替");
+      if (isOperatorSwitch || (isTollGate && !isExit)) {
+        const facilityName = extractFacilityName(inst, "switch");
+        const opTransition = isOperatorSwitch
+          ? `${OPERATOR_LABELS[currentOperator] || "高速"} ➔ ${OPERATOR_LABELS[stepOp] || "高速"}`
+          : "料金所通過";
+        const switchLabel = facilityName ? `${facilityName}（${opTransition}）` : opTransition;
+
         items.push({
           kind: "node",
           type: "switch",
@@ -202,15 +247,22 @@ function extractHighwayTimeline(route, legToll) {
 
       // ③ 一般道への出口IC
       if (isExit) {
+        let exitName = extractFacilityName(inst, "exit");
+        if (!exitName && i + 1 < steps.length) {
+          const nextInst = (steps[i + 1]?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim();
+          exitName = extractFacilityName(nextInst, "exit");
+        }
+
         items.push({
           kind: "node",
           type: "exit",
           badgeText: "出口",
-          name: name || "有料区間出口"
+          name: exitName || (stepRoad ? `${stepRoad} 出口` : "有料区間出口")
         });
-        inToll = false;
-        justExited = true;
+        lastEndedSeg = currentSeg;
         currentSeg = null;
+        inToll = false;
+        exitingToll = true;
         currentOperator = null;
         currentRoad = "";
       }
@@ -235,7 +287,7 @@ function buildTimelineHtml(items) {
         </div>
       `;
     } else {
-      const roadLabel = item.roads.length > 0 ? item.roads.join(" ・ ") : "有料道路区間";
+      const roadLabel = item.roads.length > 0 ? item.roads.join(" ➔ ") : "有料道路区間";
       const km = (item.distM / 1000).toFixed(1);
       const min = Math.max(1, Math.round(item.sec / 60));
       const tollTag = item.isEstimated ? "ETC目安" : "ETC";
