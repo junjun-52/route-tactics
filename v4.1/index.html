@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="ROUTE TACTICS">
-<title>ROUTE TACTICS V4 | ルート・タクティクス</title>
+<title>ROUTE TACTICS V4.1 | ルート・タクティクス</title>
 <script>
   (function() {
     const link = document.createElement('link');
@@ -21,8 +21,8 @@
 <header class="app-header">
   <div class="header-inner">
     <div>
-      <h1 class="brand-title"><span class="brand-accent"></span>ROUTE TACTICS <span class="ver-badge">V4</span></h1>
-      <div class="brand-sub">ルート・タクティクス｜TIME × TOLL OPTIMIZER</div>
+      <h1 class="brand-title"><span class="brand-accent"></span>ROUTE TACTICS <span class="ver-badge">V4.1</span></h1>
+      <div class="brand-sub">ルート・タクティクス｜MULTI-SOURCE TRAFFIC & TOLL</div>
     </div>
     <div class="user-box">
       <div class="user-badge" id="currentUserBadge">👤 デフォルト</div>
@@ -61,7 +61,7 @@
 
   <div class="panel">
     <div class="sec-head">
-      <div><span class="sec-title-en">01 / VEHICLE & PLACES</span><span class="sec-title-jp">車両・自宅・登録地設定</span></div>
+      <div><span class="sec-title-en">01 / VEHICLE & PLACES</span><span class="sec-title-jp">車両・登録地・渋滞API設定</span></div>
     </div>
     <div class="row">
       <div>
@@ -102,13 +102,22 @@
       </div>
     </div>
 
-    <button class="btn-save" onclick="saveUserSettings()">このスマホ内に設定（燃費・自宅・登録地）を保存</button>
+    <button type="button" class="btn-sub" id="btnToggleTomtom" onclick="toggleTomtomEditor()">🚦 渋滞精度向上（TomTom APIキー設定）</button>
+    <div id="tomtomEditor" class="places-editor">
+      <label style="color:var(--navy);">🔑 TomTom API Key（2社クロスチェック＆事故・規制取得用）</label>
+      <input type="password" id="tomtomApiKeyInput" placeholder="TomTom Developer で発行したAPIキーを貼り付け" style="margin-bottom:6px;">
+      <div style="font-size:10px; color:var(--text-sub); line-height:1.4;">
+        ※キーはこの端末のブラウザ内（localStorage）のみに保存され、外部へ公開されません。設定するとGoogle＋TomTomの2社比較と事故・工事情報の取得が有効になります。
+      </div>
+    </div>
+
+    <button class="btn-save" onclick="saveAllSettingsV41()">このスマホ内に設定（燃費・登録地・APIキー）を保存</button>
     <div id="saveStatus" class="status"></div>
   </div>
 
   <div class="panel">
     <div class="sec-head">
-      <div><span class="sec-title-en">02 / SCHEDULE & TOLL SOURCE</span><span class="sec-title-jp">日時・料金参照設定</span></div>
+      <div><span class="sec-title-en">02 / SCHEDULE & TOLL SOURCE</span><span class="sec-title-jp">日時・渋滞・料金参照設定</span></div>
       <button type="button" class="btn-now" onclick="setNowDateTime()">現在日時</button>
     </div>
     <select id="timeMode" onchange="updateSourceBadge()">
@@ -130,7 +139,7 @@
 
   <div class="panel">
     <div class="sec-head">
-      <div><span class="sec-title-en">03 / ROUTE TACTICS</span><span class="sec-title-jp">ルート戦略比較</span></div>
+      <div><span class="sec-title-en">03 / ROUTE TACTICS</span><span class="sec-title-jp">ルート戦略・渋滞リスク比較</span></div>
     </div>
 
     <label>出発地（ボタンでワンタップ入力）</label>
@@ -144,11 +153,20 @@
     <div class="quick-chips" id="destChips"></div>
     <input type="text" id="destination" placeholder="目的地を入力（施設名・住所・駅名など）" value="">
 
-    <button class="btn-calc" onclick="calculateAll()">ルート・コスト比較を実行</button>
+    <button class="btn-calc" onclick="calculateAll()">ルート・渋滞・コスト比較を実行</button>
 
     <div id="resultArea" style="display:none;">
       <div id="diffBanner" class="diff-banner"></div>
+      <div id="trafficSummaryBar" class="traffic-summary-bar" style="display:none;"></div>
       <div class="compare-grid" id="compareGrid"></div>
+
+      <div id="incidentWrap" class="hw-detail-wrap" style="display:none;">
+        <div class="hw-detail-header" onclick="toggleIncidentBody()">
+          <span class="hw-detail-title" id="incidentWrapTitle">🚨 ルート周辺の事故・工事・規制情報</span>
+          <span class="hw-detail-toggle" id="incidentToggleText">▲ 閉じる</span>
+        </div>
+        <div class="hw-detail-body" id="incidentBody"></div>
+      </div>
 
       <div id="hwDetailWrap" class="hw-detail-wrap" style="display:none;">
         <div class="hw-detail-header" onclick="toggleHwDetailBody()">
@@ -159,7 +177,17 @@
       </div>
     </div>
 
-    <div id="map"></div>
+    <div id="mapWrap" style="display:none; margin-top:12px;">
+      <div class="map-toolbar">
+        <div class="map-legend">
+          <span class="legend-item"><i style="background:#14233c;"></i>順調</span>
+          <span class="legend-item"><i style="background:#f59e0b;"></i>混雑</span>
+          <span class="legend-item"><i style="background:#dc2626;"></i>渋滞</span>
+        </div>
+        <button type="button" class="btn-traffic-toggle active" id="btnTrafficLayer" onclick="toggleTrafficLayer()">🚦 リアルタイム渋滞線 ON</button>
+      </div>
+      <div id="map"></div>
+    </div>
 
     <div id="navButtons" style="display:none; margin-top:10px;"></div>
   </div>
@@ -172,7 +200,7 @@
     ['profile.js', 'weather.js', 'highway.js', 'app.js'].forEach(file => {
       const s = document.createElement('script');
       s.src = file + '?v=' + v;
-      s.async = false; // 読み込み順を保証
+      s.async = false;
       document.body.appendChild(s);
     });
   })();
