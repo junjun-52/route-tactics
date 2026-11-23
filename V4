@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="ROUTE TACTICS">
-<title>ROUTE TACTICS V3 | ルート・タクティクス</title>
+<title>ROUTE TACTICS V4 | ルート・タクティクス</title>
 <style>
   :root {
     --navy: #14233c;
@@ -373,7 +373,7 @@
     display: inline-block;
     margin-bottom: 8px;
   }
-  /* 到着時天気バッジ */
+  /* V4: 到着時天気バッジ */
   .weather-badge {
     display: flex;
     justify-content: space-between;
@@ -422,7 +422,7 @@
   .card.mix .price-big { color: var(--orange-dark); }
   .card.local .price-big { color: var(--green); }
 
-  /* V3: 高速詳細タイムライン */
+  /* 高速詳細タイムライン */
   .hw-detail-wrap {
     margin-top: 12px;
     border: 1px solid var(--border);
@@ -609,7 +609,7 @@
 <header class="app-header">
   <div class="header-inner">
     <div>
-      <h1 class="brand-title"><span class="brand-accent"></span>ROUTE TACTICS <span class="ver-badge">V3</span></h1>
+      <h1 class="brand-title"><span class="brand-accent"></span>ROUTE TACTICS <span class="ver-badge">V4</span></h1>
       <div class="brand-sub">ルート・タクティクス｜TIME × TOLL OPTIMIZER</div>
     </div>
     <div class="user-box">
@@ -738,7 +738,7 @@
       <div id="diffBanner" class="diff-banner"></div>
       <div class="compare-grid" id="compareGrid"></div>
 
-      <!-- V3: 高速詳細（乗降IC・JCT・料金切替） -->
+      <!-- 高速詳細（乗降IC・JCT・料金切替） -->
       <div id="hwDetailWrap" class="hw-detail-wrap" style="display:none;">
         <div class="hw-detail-header" onclick="toggleHwDetailBody()">
           <span class="hw-detail-title">🛣️ 高速詳細（乗降IC・JCT・料金切替）</span>
@@ -758,6 +758,7 @@
 <script>
   // ※外部公開する場合は Google Cloud Console で HTTPリファラー制限・API制限を設定してください
   const API_KEY = "AIzaSyA-4TpNpWbRZMvQKvm2oP2KPi50KIvdvSA";
+  // ※V3からの保存データ（自宅・登録地・プロフィール）を引き継ぐためキーを維持
   const PROFILES_STORAGE_KEY = "RT_LOCAL_PROFILES_V3";
   const ACTIVE_PROFILE_KEY = "RT_ACTIVE_PROFILE_V3";
   const MAX_WAYPOINTS = 5;
@@ -771,7 +772,7 @@
   let waypoints = []; // { name: "", modeAfter: "local" | "highway" }
   let firstSegmentMode = "highway"; // 出発地 ➔ 経由地1 のモード
 
-  // V3: 高速詳細タブ用データ
+  // 高速詳細タブ用データ
   let latestHwDetailHtml = "";
   let latestMixDetailHtml = "";
 
@@ -1222,7 +1223,7 @@
     };
   }
 
-  // ===== V3: ステップから乗降IC・JCT・料金切替を抽出 =====
+  // ===== ステップから乗降IC・JCT・料金切替を抽出 =====
   function extractHighwayEvents(route) {
     const events = [];
     if (!route || !Array.isArray(route.legs)) return events;
@@ -1330,7 +1331,7 @@
     return h > 0 ? `${h}時間${m}分` : `${m}分`;
   }
 
-  // ===== 到着時天気（Open-Meteo API） =====
+  // ===== V4: 到着時天気（Open-Meteo API） =====
   function parseWeatherCode(code) {
     if (code === 0) return { icon: '☀️', text: '快晴' };
     if (code <= 3) return { icon: '⛅', text: '晴/曇' };
