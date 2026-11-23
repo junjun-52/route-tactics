@@ -543,11 +543,6 @@
   .hw-badge.toll { background: #ffedd5; color: #9a3412; }
   .hw-badge.exit { background: #fee2e2; color: #991b1b; }
 
-  .hw-event-meta {
-    font-size: 10px;
-    color: var(--text-sub);
-    margin-top: 2px;
-  }
   .hw-empty {
     font-size: 11px;
     color: var(--text-sub);
@@ -738,10 +733,10 @@
       <div id="diffBanner" class="diff-banner"></div>
       <div class="compare-grid" id="compareGrid"></div>
 
-      <!-- 高速詳細（乗降IC・JCT・料金切替） -->
+      <!-- 有料区間詳細（入口IC・出口IC・料金切替） -->
       <div id="hwDetailWrap" class="hw-detail-wrap" style="display:none;">
         <div class="hw-detail-header" onclick="toggleHwDetailBody()">
-          <span class="hw-detail-title">🛣️ 高速詳細（乗降IC・JCT・料金切替）</span>
+          <span class="hw-detail-title">🛣️ 有料区間詳細（乗降IC・料金切替）</span>
           <span class="hw-detail-toggle" id="hwDetailToggleText">▲ 閉じる</span>
         </div>
         <div class="hw-detail-body" id="hwDetailBody"></div>
@@ -1223,62 +1218,90 @@
     };
   }
 
-  // ===== ステップから乗降IC・JCT・料金切替を抽出 =====
+  // ===== V4: 有料区間の入口IC・出口IC・料金切替名のみ抽出 =====
+  function extractFacilityName(inst) {
+    // 1. 具体的なIC・JCT・料金所・出入口・ランプ名を最優先で抽出
+    const facilityRe = /([^\s\/（）()・]+?(?:スマートIC|スマートＩＣ|IC|ＩＣ|JCT|ＪＣＴ|本線料金所|料金所|出入口|入口|出口|ランプ))/g;
+    const matches = inst.match(facilityRe);
+    if (matches) {
+      for (const m of matches) {
+        if (/^(入口|出口|出入口|ランプ|料金所)$/.test(m)) continue;
+        return m;
+      }
+    }
+    // 2. IC名が案内文に含まれない場合は高速道路・路線名を抽出
+    const roadRe = /([^\s\/（）()]+?(?:自動車道|高速道路|有料道路|高速|名二環|伊勢湾岸|セントレアライン|知多半島道路|東海環状|東海北陸|東名|名神|新東名|新名神|中央道|北陸道|首都高|阪神高速|名古屋高速))/;
+    const roadMatch = inst.match(roadRe);
+    if (roadMatch) return roadMatch[1];
+
+    return null;
+  }
+
   function extractHighwayEvents(route) {
     const events = [];
     if (!route || !Array.isArray(route.legs)) return events;
 
-    let cumDistM = 0;
-    let cumSec = 0;
-    const hwKeywordRe = /(高速|自動車道|有料道路|有料区間|IC|ＩＣ|インター|JCT|ＪＣＴ|ジャンクション|ランプ|スマートIC|名二環|伊勢湾岸|東名|名神|中央道|北陸道|関越|東北道|常磐道|山陽道|中国道|九州道|新東名|新名神|圏央道|外環|首都高|阪神高速|名古屋高速|知多半島道路|セントレアライン|東海環状|東海北陸|紀勢|名阪|京奈和|阪和|西名阪|近畿道|第二京阪)/i;
+    const pushUnique = (type, badgeText, name) => {
+      if (!name) return;
+      const last = events[events.length - 1];
+      if (last && last.name === name && last.type === type) return;
+      events.push({ type, badgeText, name });
+    };
 
     for (const leg of route.legs) {
       const steps = leg.steps || [];
-      for (const step of steps) {
-        const instRaw = step?.navigationInstruction?.instructions || "";
-        const inst = instRaw.replace(/\n+/g, " ").trim();
+      let inToll = false;
+      let currentRoad = "";
+
+      for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
+        const inst = (step?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim();
         const maneuver = step?.navigationInstruction?.maneuver || "";
-        const distM = step.distanceMeters || 0;
-        const sec = parseInt((step.staticDuration || "0s").replace("s", ""), 10) || 0;
+        const isTollStep = /有料区間|有料道路/.test(inst);
 
-        if (inst) {
-          let type = null;
-          let badgeText = "";
-
-          const isToll = /(料金所|本線料金所|有料区間|有料道路|ETC)/i.test(inst);
-          const isExit = maneuver.includes("OFF_RAMP") || (/(出口|降り|出る|流出)/.test(inst) && hwKeywordRe.test(inst));
-          const isJct = /(JCT|ＪＣＴ|ジャンクション)/.test(inst) || ((maneuver.includes("FORK") || /分岐|方面/.test(inst)) && hwKeywordRe.test(inst) && !/(ランプ|入口)/.test(inst));
-          const isEntry = (maneuver === "MERGE" || maneuver.includes("RAMP_")) && hwKeywordRe.test(inst) && !isExit
-            || (/(入口|ランプ|に入る|合流)/.test(inst) && hwKeywordRe.test(inst) && !isExit);
-
-          if (isExit) {
-            type = "exit";
-            badgeText = "出口IC";
-          } else if (isJct) {
-            type = "jct";
-            badgeText = "JCT・分岐";
-          } else if (isToll && !isEntry) {
-            type = "toll";
-            badgeText = "料金・有料";
-          } else if (isEntry) {
-            type = "entry";
-            badgeText = "入口IC";
-          }
-
-          if (type) {
-            events.push({
-              type,
-              badgeText,
-              text: inst,
-              atKm: (cumDistM / 1000).toFixed(1),
-              atMin: Math.round(cumSec / 60),
-              stepKm: (distM / 1000).toFixed(1)
-            });
-          }
+        if (!isTollStep) {
+          inToll = false;
+          currentRoad = "";
+          continue;
         }
 
-        cumDistM += distM;
-        cumSec += sec;
+        const name = extractFacilityName(inst);
+        const isExit = maneuver.includes("OFF_RAMP") || /出口を|降りる|出る/.test(inst);
+        const isTollGate = /料金所/.test(inst);
+        const isJct = /(JCT|ＪＣＴ|ジャンクション)/.test(inst);
+
+        // ① 有料区間の入口（最初の有料ステップ）
+        if (!inToll) {
+          inToll = true;
+          pushUnique("entry", "入口IC", name || "有料区間入口");
+          if (name && !/(IC|ＩＣ|出口|入口)$/.test(name)) currentRoad = name;
+          continue;
+        }
+
+        // ② 出口IC（有料区間の終了・流出）
+        if (isExit) {
+          if (name) {
+            pushUnique("exit", "出口IC", name);
+          }
+          const nextInst = (steps[i + 1]?.navigationInstruction?.instructions || "");
+          if (!/有料区間|有料道路/.test(nextInst)) {
+            inToll = false;
+            currentRoad = "";
+          }
+          continue;
+        }
+
+        // ③ 途中の料金所・JCT・路線切替（料金が変わるポイント）
+        if (isTollGate && name) {
+          pushUnique("toll", "料金切替", name);
+        } else if (isJct && name) {
+          pushUnique("jct", "JCT・切替", name);
+        } else if (name && /(高速|自動車道|有料道路|名二環|伊勢湾岸|名古屋高速|首都高|阪神高速)/.test(name)) {
+          if (currentRoad && currentRoad !== name) {
+            pushUnique("toll", "路線切替", name);
+          }
+          currentRoad = name;
+        }
       }
     }
     return events;
@@ -1286,15 +1309,14 @@
 
   function buildTimelineHtml(events) {
     if (!events || events.length === 0) {
-      return `<div class="hw-empty">高速道路・有料道路の乗降ICやJCTの案内は検出されませんでした。</div>`;
+      return `<div class="hw-empty">有料区間のIC情報は検出されませんでした。</div>`;
     }
     const items = events.map(ev => `
       <div class="hw-event ${ev.type}">
         <span class="hw-event-dot"></span>
         <div>
-          <span class="hw-badge ${ev.type}">${ev.badgeText}</span>${escapeHtml(ev.text)}
+          <span class="hw-badge ${ev.type}">${ev.badgeText}</span><b>${escapeHtml(ev.name)}</b>
         </div>
-        <div class="hw-event-meta">出発から約 ${ev.atKm}km（約${ev.atMin}分地点）</div>
       </div>
     `).join('');
     return `<div class="hw-timeline">${items}</div>`;
