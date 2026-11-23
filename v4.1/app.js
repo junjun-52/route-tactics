@@ -250,7 +250,7 @@ async function fetchRoute(originText, destinationText, avoidTolls, departureDate
     if (isFuture) {
       payload.departureTime = departureDate.toISOString();
       if (useOptimal) {
-        payload.trafficModel = trafficModel; // 'BEST_GUESS' or 'PESSIMISTIC'
+        payload.trafficModel = trafficModel;
       }
     }
 
@@ -259,7 +259,7 @@ async function fetchRoute(originText, destinationText, avoidTolls, departureDate
       headers: {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': API_KEY,
-        'X-Goog-FieldMask': 'routes.duration,routes.staticDuration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.travelAdvisory.tollInfo,routes.travelAdvisory.speedReadingIntervals,routes.legs.startLocation,routes.legs.endLocation,routes.legs.steps.navigationInstruction,routes.legs.steps.distanceMeters,routes.legs.steps.staticDuration'
+        'X-Goog-FieldMask': 'routes.duration,routes.staticDuration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.travelAdvisory.tollInfo,routes.travelAdvisory.speedReadingIntervals,routes.legs.startLocation,routes.legs.endLocation,routes.legs.steps.startLocation,routes.legs.steps.navigationInstruction,routes.legs.steps.distanceMeters,routes.legs.steps.staticDuration'
       },
       body: JSON.stringify(payload)
     });
@@ -321,7 +321,6 @@ function decodeEncodedPathSafe(encoded) {
       lng: p.lng()
     }));
   }
-  // Google Maps JS未ロード時のフォールバックデコーダ
   let index = 0, lat = 0, lng = 0;
   const coords = [];
   while (index < encoded.length) {
@@ -380,7 +379,6 @@ async function fetchTomtomIncidentsAlongPolylines(encodedPolylines) {
     const allPts = [];
     encodedPolylines.forEach(enc => {
       const pts = decodeEncodedPathSafe(enc);
-      // 間引きながらサンプル点を収集（約500m〜1km間隔）
       const step = Math.max(1, Math.floor(pts.length / 180));
       for (let i = 0; i < pts.length; i += step) {
         allPts.push(pts[i]);
@@ -390,7 +388,6 @@ async function fetchTomtomIncidentsAlongPolylines(encodedPolylines) {
 
     if (allPts.length === 0) return [];
 
-    // 長距離ルートでもTomTomのbbox上限(約10,000km2)を超えないよう最大4チャンクに分割
     const chunkCount = Math.min(4, Math.max(1, Math.ceil(allPts.length / 60)));
     const chunkSize = Math.ceil(allPts.length / chunkCount);
     const bboxes = [];
@@ -405,7 +402,6 @@ async function fetchTomtomIncidentsAlongPolylines(encodedPolylines) {
         if (p.lng < minLng) minLng = p.lng;
         if (p.lng > maxLng) maxLng = p.lng;
       });
-      // 約2kmの余白を追加
       const pad = 0.02;
       bboxes.push(`${(minLng - pad).toFixed(5)},${(minLat - pad).toFixed(5)},${(maxLng + pad).toFixed(5)},${(maxLat + pad).toFixed(5)}`);
     }
@@ -427,7 +423,6 @@ async function fetchTomtomIncidentsAlongPolylines(encodedPolylines) {
     for (const inc of merged) {
       const props = inc.properties || {};
       const cat = props.iconCategory || 0;
-      // 通常の自然渋滞(6)のうち遅延が極小のものはノイズになりやすいので、事故・工事・規制・通行止め等を優先
       if (cat === 6 && (props.magnitudeOfDelay || 0) < 2) continue;
 
       let coord = null;
@@ -439,7 +434,6 @@ async function fetchTomtomIncidentsAlongPolylines(encodedPolylines) {
       }
       if (!coord) continue;
 
-      // ルートポリライン上から約600m以内のインシデントのみ抽出
       let nearRoute = false;
       for (let i = 0; i < allPts.length; i++) {
         if (approxDistMeters(coord.lat, coord.lng, allPts[i].lat, allPts[i].lng) <= 600) {
@@ -475,7 +469,6 @@ async function fetchTomtomIncidentsAlongPolylines(encodedPolylines) {
       });
     }
 
-    // 重要度順（通行止め・事故・規制を上位）にソート
     const priority = { 8: 1, 1: 2, 7: 3, 9: 4, 3: 5, 11: 6, 14: 6, 6: 7 };
     filtered.sort((a, b) => (priority[a.category] || 9) - (priority[b.category] || 9));
     return filtered.slice(0, 15);
@@ -488,7 +481,6 @@ async function fetchTomtomIncidentsAlongPolylines(encodedPolylines) {
 function buildTrafficBadgeHtml({ googleSec, staticSec, pessimisticSec, tomtomSec, isFuture }) {
   const delayMin = Math.max(0, Math.round((googleSec - staticSec) / 60));
 
-  // 1. 渋滞レベル判定
   let statusText = '🟢 スムーズ';
   let statusCls = 'tr-smooth';
   if (delayMin >= 15) {
@@ -499,7 +491,6 @@ function buildTrafficBadgeHtml({ googleSec, staticSec, pessimisticSec, tomtomSec
     statusCls = 'tr-slow';
   }
 
-  // 2. マルチソース信頼度＆ブレ幅判定
   let subNote = '';
   let maxRiskSec = googleSec;
 
@@ -598,7 +589,7 @@ function formatHHMM(dateObj) {
 }
 
 function calcStartEndTime(baseDt, mode, durationSec, maxRiskSec = null) {
-  const hasRange = maxRiskSec && (maxRiskSec - durationSec >= 300); // 5分以上のリスク幅があればレンジ表示
+  const hasRange = maxRiskSec && (maxRiskSec - durationSec >= 300);
   if (mode === 'departure') {
     const start = new Date(baseDt.getTime());
     const end = new Date(baseDt.getTime() + durationSec * 1000);
@@ -766,7 +757,7 @@ async function calculateAll() {
 
   resultArea.style.display = 'block';
   diffBanner.innerHTML = hasTomtom
-    ? 'Google Routes × TomTom API からマルチソース渋滞・ETC料金・事故規制を解析中...'
+    ? 'Google Routes × TomTom API からマルチソース渋滞・ETC料金・IC詳細を解析中...'
     : 'Google Routes API からルート・渋滞状況・ETC料金を取得中...';
   summaryBar.style.display = 'none';
   compareGrid.innerHTML = '';
@@ -774,7 +765,6 @@ async function calculateAll() {
   hwDetailWrap.style.display = 'none';
   incidentWrap.style.display = 'none';
 
-  // 1. Google Routes API（通常予測 ＋ 未来日時は悲観的予測も並列取得）
   const [hwRoute, localRoute, hwPessRoute, loPessRoute] = await Promise.all([
     fetchRoute(origin, dest, false, apiDepartureDt, isFuture ? 'BEST_GUESS' : null),
     fetchRoute(origin, dest, true, apiDepartureDt, isFuture ? 'BEST_GUESS' : null),
@@ -787,11 +777,9 @@ async function calculateAll() {
     return;
   }
 
-  // Googleのレスポンスから正確な出発地・目的地座標を取得
   const startLatLng = hwRoute.legs?.[0]?.startLocation?.latLng;
   const destLatLng = hwRoute.legs?.[hwRoute.legs.length - 1]?.endLocation?.latLng;
 
-  // 天気予報 & TomTom（高速・下道クロスチェック）を並列起動
   const weatherPromise = destLatLng
     ? fetchDestinationWeatherData(destLatLng.latitude, destLatLng.longitude)
     : Promise.resolve(null);
@@ -820,14 +808,16 @@ async function calculateAll() {
   const loGas = Math.round((loDist / eff) * gas);
   const loTotal = loGas;
 
-  // 全高速ルートの詳細HTML生成
+  // 全高速ルートのタイムライン抽出＆座標からのIC・ランプ名補完
   const hwTimelineItems = extractHighwayTimeline(hwRoute, hwToll);
-  latestHwDetailHtml = `
-    <div class="hw-leg-block">
-      <div class="hw-leg-head">${escapeHtml(formatDisplayOrigin(origin))} ➔ ${escapeHtml(dest)}</div>
-      ${buildTimelineHtml(hwTimelineItems)}
-    </div>
-  `;
+  const hwTimelinePromise = resolveMissingFacilityNames(hwTimelineItems).then(resolvedItems => {
+    latestHwDetailHtml = `
+      <div class="hw-leg-block">
+        <div class="hw-leg-head">${escapeHtml(formatDisplayOrigin(origin))} ➔ ${escapeHtml(dest)}</div>
+        ${buildTimelineHtml(resolvedItems)}
+      </div>
+    `;
+  });
   latestMixDetailHtml = "";
 
   // ミックスルート計算
@@ -877,7 +867,6 @@ async function calculateAll() {
       const psSec = pessRoute?.duration ? parseInt(pessRoute.duration.replace('s', ''), 10) : s;
       const tObj = extractApiToll(route, leg.avoidTolls);
 
-      // TomTom区間クロスチェック
       if (ttAllLegsOk) {
         const legStart = route.legs?.[0]?.startLocation?.latLng;
         const legEnd = route.legs?.[route.legs.length - 1]?.endLocation?.latLng;
@@ -911,7 +900,9 @@ async function calculateAll() {
       modeLabels.push(leg.avoidTolls ? '下道' : '高速');
 
       const modeTag = leg.avoidTolls ? '下道' : '高速';
-      const legItems = leg.avoidTolls ? [] : extractHighwayTimeline(route, tObj.toll);
+      const legItems = leg.avoidTolls
+        ? []
+        : await resolveMissingFacilityNames(extractHighwayTimeline(route, tObj.toll));
       mixLegDetailBlocks.push(`
         <div class="hw-leg-block">
           <div class="hw-leg-head">区間${i + 1} [${modeTag}]：${escapeHtml(formatDisplayOrigin(leg.from))} ➔ ${escapeHtml(formatDisplayOrigin(leg.to))}</div>
@@ -943,15 +934,14 @@ async function calculateAll() {
     }
   }
 
-  // TomTom並列結果を待機 + インシデント取得
   const [weatherData, ttHwRes, ttLoRes, incidents] = await Promise.all([
     weatherPromise,
     ttHwPromise,
     ttLoPromise,
-    hasTomtom ? fetchTomtomIncidentsAlongPolylines(allEncodedPolysForIncidents) : Promise.resolve([])
+    hasTomtom ? fetchTomtomIncidentsAlongPolylines(allEncodedPolysForIncidents) : Promise.resolve([]),
+    hwTimelinePromise
   ]);
 
-  // 渋滞バッジ＆リスク計算
   const hwTrafficInfo = buildTrafficBadgeHtml({
     googleSec: hwSec,
     staticSec: hwStaticSec,
@@ -977,7 +967,6 @@ async function calculateAll() {
   const hwRoiHtml = buildRoiRowsHtml(hwTotal, hwSec, loTotal, loSec, false);
   const loRoiHtml = buildRoiRowsHtml(loTotal, loSec, loTotal, loSec, true);
 
-  // 上部マルチソースサマリーバー表示
   const activeSources = ['Google Routes'];
   if (ttHwRes || ttLoRes) activeSources.push('TomTom Routing');
   if (hasTomtom) activeSources.push(`TomTom Traffic (${incidents.length}件検出)`);
@@ -987,7 +976,6 @@ async function calculateAll() {
     ${!hasTomtom ? '<span class="summary-tip" onclick="toggleTomtomEditor()">＋TomTom追加で精度UP</span>' : ''}
   `;
 
-  // インシデントパネル描画
   renderIncidentsPanel(incidents, hasTomtom);
 
   if (!mixData) {
@@ -1156,7 +1144,6 @@ function toggleTrafficLayer() {
 }
 
 function drawPolylineWithTraffic(map, path, baseColor, intervals) {
-  // ベースポリラインを描画
   new google.maps.Polyline({
     path: path,
     geodesic: true,
@@ -1167,7 +1154,6 @@ function drawPolylineWithTraffic(map, path, baseColor, intervals) {
     map: map
   });
 
-  // 混雑(SLOW)・渋滞(TRAFFIC_JAM)区間を上に重ねて色分け強調
   if (!Array.isArray(intervals) || intervals.length === 0) return;
 
   intervals.forEach(iv => {
@@ -1220,7 +1206,6 @@ function drawMap(polylines, incidents = []) {
   });
   currentMapInstance = map;
 
-  // Google Maps リアルタイム渋滞レイヤー
   const trafficLayer = new google.maps.TrafficLayer();
   if (isTrafficLayerOn) {
     trafficLayer.setMap(map);
@@ -1234,7 +1219,6 @@ function drawMap(polylines, incidents = []) {
     item.path.forEach(pt => bounds.extend(pt));
   });
 
-  // TomTom インシデント（事故・工事・規制）マーカー配置
   const infoWindow = new google.maps.InfoWindow();
   incidents.forEach(inc => {
     const marker = new google.maps.Marker({
