@@ -27,7 +27,6 @@ function detectTollOperator(roadName) {
   return "nexco";
 }
 
-// 案内文から「〇〇 方面の」を除いた実際に走行する路線名を抽出
 function extractDrivingRoad(inst) {
   const withoutDir = inst.replace(/[^\s\/（）()]+?\s*方面の\s*/g, "");
   const matches = withoutDir.match(ROAD_NAME_RE);
@@ -38,7 +37,6 @@ function extractDrivingRoad(inst) {
   return (fallback && fallback.length > 0) ? fallback[fallback.length - 1] : "";
 }
 
-// IC名・出入口名・料金所名を抽出（JCTは除外）
 function extractFacilityName(inst, mode) {
   if (!inst) return null;
 
@@ -62,7 +60,7 @@ function extractFacilityName(inst, mode) {
     return `${prefix}${m[2]}`;
   }
 
-  // 3. 出口案内で「出口を 浜松 方面の〜」のように方面名しか出ない場合の補完
+  // 3. 出口案内で「出口を 新潟西 方面の〜」のように方面名しか出ない場合の補完
   if (mode === "exit") {
     const exitDir = inst.match(/出口を\s*([一-龠ァ-ヶーA-Za-z0-9０-９]{2,12}?)\s*方面/);
     if (exitDir) {
@@ -76,7 +74,6 @@ function extractFacilityName(inst, mode) {
   return null;
 }
 
-// 複数事業者をまたぐ場合、API総額と1円単位で一致するよう区間別ETC料金を配分
 function allocateSegmentTolls(segments, totalLegToll) {
   if (!segments || segments.length === 0) return;
   if (!totalLegToll || totalLegToll <= 0) {
@@ -117,7 +114,7 @@ function allocateSegmentTolls(segments, totalLegToll) {
 }
 
 function extractHighwayTimeline(route, legToll) {
-  const items = []; // { kind: 'node' | 'seg', ... }
+  const items = [];
   if (!route || !Array.isArray(route.legs)) return items;
 
   const segments = [];
@@ -159,8 +156,23 @@ function extractHighwayTimeline(route, legToll) {
       const distM = step.distanceMeters || 0;
       const sec = parseInt((step.staticDuration || "0s").replace("s", ""), 10) || 0;
       const isTollStep = /有料区間|有料道路/.test(inst);
+      const isExit = maneuver.includes("OFF_RAMP") || /出口を|出口へ|降りる|出る/.test(inst);
 
+      // 有料区間から一般道へ出た瞬間（「有料区間」の文字が消えた出口ステップもここで出口として拾う）
       if (!isTollStep) {
+        if (inToll) {
+          let exitName = extractFacilityName(inst, "exit");
+          if (!exitName && i > 0) {
+            const prevInst = (steps[i - 1]?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim();
+            exitName = extractFacilityName(prevInst, "exit");
+          }
+          items.push({
+            kind: "node",
+            type: "exit",
+            badgeText: "出口",
+            name: exitName || (currentRoad ? `${currentRoad} 出口` : "有料区間出口")
+          });
+        }
         inToll = false;
         exitingToll = false;
         currentSeg = null;
@@ -173,9 +185,8 @@ function extractHighwayTimeline(route, legToll) {
       const stepRoad = extractDrivingRoad(inst) || currentRoad;
       const stepOp = detectTollOperator(stepRoad) || currentOperator || "nexco";
       const isTollGate = /本線料金所|料金所/.test(inst);
-      const isExit = maneuver.includes("OFF_RAMP") || /出口を|出口へ|降りる|出る/.test(inst);
 
-      // 出口ICを通過した直後のランプ・出口料金所ステップは直前区間に吸収（ゴースト区間防止）
+      // 出口ICを通過した直後のランプ・出口料金所ステップは直前区間に吸収
       if (exitingToll) {
         const isReEntry = /入口|に入る|合流/.test(inst) && !isExit && !isTollGate && !/国道|県道|市道/.test(inst);
         if (!isReEntry) {
@@ -188,15 +199,15 @@ function extractHighwayTimeline(route, legToll) {
         exitingToll = false;
       }
 
-      // ① 有料区間の入口（現在のステップ or 直前のアプローチ案内からIC名を探索）
+      // ① 有料区間の入口（現在または最大2ステップ手前の一般道案内からIC名を探索）
       if (!inToll) {
         inToll = true;
         currentRoad = stepRoad;
         currentOperator = stepOp;
 
         let entryName = extractFacilityName(inst, "entry");
-        if (!entryName && i > 0) {
-          const prevInst = (steps[i - 1]?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim();
+        for (let back = 1; back <= 2 && !entryName && (i - back) >= 0; back++) {
+          const prevInst = (steps[i - back]?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim();
           entryName = extractFacilityName(prevInst, "entry");
         }
 
@@ -245,7 +256,7 @@ function extractHighwayTimeline(route, legToll) {
         currentSeg.sec += sec;
       }
 
-      // ③ 一般道への出口IC
+      // ③ 有料区間ステップ内で出口ICが検出された場合
       if (isExit) {
         let exitName = extractFacilityName(inst, "exit");
         if (!exitName && i + 1 < steps.length) {
