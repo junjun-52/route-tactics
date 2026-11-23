@@ -251,6 +251,15 @@ function formatDuration(sec) {
   return h > 0 ? `${h}時間${m}分` : `${m}分`;
 }
 
+function formatShortDurationFromMin(totalMin) {
+  const absMin = Math.abs(totalMin);
+  const h = Math.floor(absMin / 60);
+  const m = absMin % 60;
+  if (h > 0 && m > 0) return `${h}時間${m}分`;
+  if (h > 0) return `${h}時間`;
+  return `${m}分`;
+}
+
 function formatHHMM(dateObj) {
   const hh = String(dateObj.getHours()).padStart(2, '0');
   const mm = String(dateObj.getMinutes()).padStart(2, '0');
@@ -267,6 +276,62 @@ function calcStartEndTime(baseDt, mode, durationSec) {
     const start = new Date(baseDt.getTime() - durationSec * 1000);
     return { start, end, text: `${formatHHMM(start)}発 ➔ ${formatHHMM(end)}着` };
   }
+}
+
+// ===== 高速の費用対効果（下道比・時間コスパ）HTML生成 =====
+function buildRoiRowsHtml(routeTotal, routeSec, loTotal, loSec, isBaseLocal) {
+  if (isBaseLocal) {
+    return `
+      <div class="metric-row roi-row"><span>下道比</span><b>基準ルート</b></div>
+      <div class="metric-row roi-row"><span>時間コスパ</span><b class="roi-good">コスト最安</b></div>
+    `;
+  }
+
+  const savedMin = Math.round((loSec - routeSec) / 60);
+  const extraCost = routeTotal - loTotal;
+
+  // パターン1: 時間を短縮でき、追加コストがかかる場合（標準）
+  if (savedMin > 0 && extraCost > 0) {
+    const perHourCost = Math.round((extraCost / savedMin) * 60);
+    const rateClass = perHourCost <= 2500 ? 'roi-good' : (perHourCost <= 4000 ? 'roi-warn' : 'roi-bad');
+    return `
+      <div class="metric-row roi-row">
+        <span>下道比</span>
+        <b>-${formatShortDurationFromMin(savedMin)} (+${extraCost.toLocaleString()}円)</b>
+      </div>
+      <div class="metric-row roi-row">
+        <span>時間コスパ</span>
+        <b class="${rateClass}">${perHourCost.toLocaleString()}円 / 1h短縮</b>
+      </div>
+    `;
+  }
+
+  // パターン2: 時間を短縮でき、しかも総額まで安い場合
+  if (savedMin > 0 && extraCost <= 0) {
+    return `
+      <div class="metric-row roi-row">
+        <span>下道比</span>
+        <b class="roi-good">-${formatShortDurationFromMin(savedMin)} (${extraCost.toLocaleString()}円)</b>
+      </div>
+      <div class="metric-row roi-row">
+        <span>時間コスパ</span>
+        <b class="roi-good">時間・費用とも有利</b>
+      </div>
+    `;
+  }
+
+  // パターン3: 時間短縮効果がない場合
+  const costText = extraCost >= 0 ? `+${extraCost.toLocaleString()}円` : `${extraCost.toLocaleString()}円`;
+  return `
+    <div class="metric-row roi-row">
+      <span>下道比</span>
+      <b class="roi-bad">短縮なし (${costText})</b>
+    </div>
+    <div class="metric-row roi-row">
+      <span>時間コスパ</span>
+      <b class="roi-bad">効果薄（下道推奨）</b>
+    </div>
+  `;
 }
 
 // ===== 比較実行 =====
@@ -345,7 +410,7 @@ async function calculateAll() {
   const loGas = Math.round((loDist / eff) * gas);
   const loTotal = loGas;
 
-  // 全高速ルートの詳細HTML生成（総額は上部カードに表示済みのため区間内訳のみ）
+  // 全高速ルートの詳細HTML生成
   const hwTimelineItems = extractHighwayTimeline(hwRoute, hwToll);
   latestHwDetailHtml = `
     <div class="hw-leg-block">
@@ -435,12 +500,15 @@ async function calculateAll() {
   const loWeatherHtml = getArrivalWeatherBadgeHtml(weatherData, loTimes.end);
   const mixWeatherHtml = mixData ? getArrivalWeatherBadgeHtml(weatherData, mixData.endDate) : '';
 
+  const hwRoiHtml = buildRoiRowsHtml(hwTotal, hwSec, loTotal, loSec, false);
+  const loRoiHtml = buildRoiRowsHtml(loTotal, loSec, loTotal, loSec, true);
+
   if (!mixData) {
     const timeDiffMin = Math.round((loSec - hwSec) / 60);
     const costDiff = hwTotal - loTotal;
 
     diffBanner.innerHTML = timeDiffMin > 0
-      ? `高速利用で ${timeDiffMin}分短縮（コスト差 ＋${costDiff.toLocaleString()}円）`
+      ? `高速利用で ${formatShortDurationFromMin(timeDiffMin)}短縮（コスト差 ＋${costDiff.toLocaleString()}円）`
       : `一般道でも所要時間はほぼ同等（${Math.abs(costDiff).toLocaleString()}円コスト削減）`;
 
     compareGrid.className = 'compare-grid grid-2';
@@ -451,8 +519,9 @@ async function calculateAll() {
         ${hwWeatherHtml}
         <div class="metric-row"><span>距離</span><b>${hwDist.toFixed(1)} km</b></div>
         <div class="metric-row"><span>所要時間</span><b>${formatDuration(hwSec)}</b></div>
-        <div class="metric-row"><span>燃料費</span><span>約${hwGas.toLocaleString()}円</span></div>
+        <div class="metric-row"><span>燃料費</span><b>約${hwGas.toLocaleString()}円</b></div>
         <div class="metric-row"><span>高速料金</span><b>${hwToll.toLocaleString()}円</b></div>
+        ${hwRoiHtml}
         <div class="sub-info">${hwTollObj.sourceLabel}</div>
         <div class="price-big">計 ${hwTotal.toLocaleString()}円</div>
       </div>
@@ -462,8 +531,9 @@ async function calculateAll() {
         ${loWeatherHtml}
         <div class="metric-row"><span>距離</span><b>${loDist.toFixed(1)} km</b></div>
         <div class="metric-row"><span>所要時間</span><b>${formatDuration(loSec)}</b></div>
-        <div class="metric-row"><span>燃料費</span><span>約${loGas.toLocaleString()}円</span></div>
+        <div class="metric-row"><span>燃料費</span><b>約${loGas.toLocaleString()}円</b></div>
         <div class="metric-row"><span>高速料金</span><b>0円</b></div>
+        ${loRoiHtml}
         <div class="sub-info">一般道優先（有料道路回避）</div>
         <div class="price-big">計 ${loTotal.toLocaleString()}円</div>
       </div>
@@ -486,6 +556,7 @@ async function calculateAll() {
 
   } else {
     const wpSummary = mixData.wpNames.map(n => escapeHtml(n)).join(' ➔ ');
+    const mixRoiHtml = buildRoiRowsHtml(mixData.total, mixData.sec, loTotal, loSec, false);
 
     diffBanner.innerHTML = `3ルート戦略比較（経由地${mixData.wpNames.length}ヶ所: ${wpSummary}）`;
     compareGrid.className = 'compare-grid grid-3';
@@ -496,8 +567,9 @@ async function calculateAll() {
         ${hwWeatherHtml}
         <div class="metric-row"><span>距離</span><b>${hwDist.toFixed(1)} km</b></div>
         <div class="metric-row"><span>時間</span><b>${formatDuration(hwSec)}</b></div>
-        <div class="metric-row"><span>燃料費</span><span>約${hwGas.toLocaleString()}円</span></div>
+        <div class="metric-row"><span>燃料費</span><b>約${hwGas.toLocaleString()}円</b></div>
         <div class="metric-row"><span>高速代</span><b>${hwToll.toLocaleString()}円</b></div>
+        ${hwRoiHtml}
         <div class="sub-info">${hwTollObj.sourceLabel}</div>
         <div class="price-big">計 ${hwTotal.toLocaleString()}円</div>
       </div>
@@ -507,8 +579,9 @@ async function calculateAll() {
         ${mixWeatherHtml}
         <div class="metric-row"><span>距離</span><b>${mixData.dist.toFixed(1)} km</b></div>
         <div class="metric-row"><span>時間</span><b>${formatDuration(mixData.sec)}</b></div>
-        <div class="metric-row"><span>燃料費</span><span>約${mixData.gas.toLocaleString()}円</span></div>
+        <div class="metric-row"><span>燃料費</span><b>約${mixData.gas.toLocaleString()}円</b></div>
         <div class="metric-row"><span>高速代</span><b>${mixData.toll.toLocaleString()}円</b></div>
+        ${mixRoiHtml}
         <div class="sub-info" style="color:var(--orange-dark);">${mixData.sourceLabel}</div>
         <div class="price-big">計 ${mixData.total.toLocaleString()}円</div>
       </div>
@@ -518,8 +591,9 @@ async function calculateAll() {
         ${loWeatherHtml}
         <div class="metric-row"><span>距離</span><b>${loDist.toFixed(1)} km</b></div>
         <div class="metric-row"><span>時間</span><b>${formatDuration(loSec)}</b></div>
-        <div class="metric-row"><span>燃料費</span><span>約${loGas.toLocaleString()}円</span></div>
+        <div class="metric-row"><span>燃料費</span><b>約${loGas.toLocaleString()}円</b></div>
         <div class="metric-row"><span>高速代</span><b>0円</b></div>
+        ${loRoiHtml}
         <div class="sub-info">一般道優先（有料道路回避）</div>
         <div class="price-big">計 ${loTotal.toLocaleString()}円</div>
       </div>
