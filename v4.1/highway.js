@@ -1,4 +1,4 @@
-// ===== 高速＆高精度 有料区間IC・JCT・ETCタイムライン (V4.1.9) =====
+// ===== 路線別ランプ照合対応 有料区間タイムライン (V4.2.1) =====
 let latestHwDetailHtml = "", latestMixDetailHtml = "";
 const ROAD_RE = /([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:自動車道|高速道路|有料道路|連絡道路|高速[0-9０-９号線]*|名二環|伊勢湾岸|セントレアライン|知多半島道路|知多横断道路|南知多道路|東海環状|東海北陸|東名|名神|新東名|新名神|中央道|北陸道|関越|東北道|常磐道|山陽道|中国道|九州道|圏央道|外環|首都高|阪神高速|名古屋高速|福岡高速|北九州高速|広島高速))/g;
 const OP_LABELS = { urban_nagoya: "名古屋高速", urban_tokyo: "首都高速", urban_hanshin: "阪神高速", urban_fukuoka: "福岡・北九州高速", urban_hiroshima: "広島高速", public_aichi: "知多半島・セントレアライン", honshi: "本四高速", nexco: "NEXCO高速" };
@@ -82,21 +82,29 @@ async function fetchWithTimeout(url, opts = {}, ms = 2500) {
   const ctrl = new AbortController(), id = setTimeout(() => ctrl.abort(), ms);
   try { return await fetch(url, { ...opts, signal: ctrl.signal }); } finally { clearTimeout(id); }
 }
-async function searchOsmPinpoint(pt, role) {
-  const q = `[out:json][timeout:3];(node["highway"="motorway_junction"]["name"](around:1200,${pt.lat},${pt.lng});way["highway"="motorway_link"]["name"](around:1200,${pt.lat},${pt.lng});node["barrier"="toll_booth"]["name"](around:1200,${pt.lat},${pt.lng}););out center;`;
+
+// 路線名（例：名古屋高速16号）から沿線のランプ・IC・JCT候補を優先照合
+async function searchRoadJunctions(pt, role, roadName) {
+  if (!pt || !roadName) return null;
+  const rKey = roadName.replace(/(高速道路|自動車道|線)$/, "");
+  const q = `[out:json][timeout:3];(node["highway"="motorway_junction"](around:2500,${pt.lat},${pt.lng});way["highway"="motorway_link"](around:2000,${pt.lat},${pt.lng});node["barrier"="toll_booth"](around:2000,${pt.lat},${pt.lng}););out center;`;
   for (const ep of ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]) {
     try {
-      const res = await fetchWithTimeout(ep, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" }, body: "data=" + encodeURIComponent(q) }, 2400);
+      const res = await fetchWithTimeout(ep, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" }, body: "data=" + encodeURIComponent(q) }, 2200);
       if (!res.ok) continue;
       const data = await res.json();
       let best = null;
       for (const el of (data.elements || [])) {
         const eLat = el.lat ?? el.center?.lat, eLon = el.lon ?? el.center?.lon;
         if (typeof eLat !== "number") continue;
-        const valid = cleanFacName(el.tags?.name || el.tags?.["name:ja"] || "", role, true);
+        const tags = el.tags || {};
+        const rawName = tags.name || tags["name:ja"] || "";
+        const refText = `${tags.ref || ""} ${tags.destination || ""} ${tags["destination:ref"] || ""}`;
+        const matchesRoad = rawName.includes(rKey) || refText.includes(rKey);
+        const valid = cleanFacName(rawName, role, true);
         if (!valid) continue;
         const d = distM(pt.lat, pt.lng, eLat, eLon);
-        const score = (role !== "switch" && /JCT$/.test(valid)) ? d + 3000 : d;
+        const score = (matchesRoad ? d * 0.4 : d + 800) + ((role !== "switch" && /JCT$/.test(valid)) ? 3000 : 0);
         if (!best || score < best.score) best = { name: valid, score };
       }
       if (best) return best.name;
@@ -104,30 +112,39 @@ async function searchOsmPinpoint(pt, role) {
   }
   return null;
 }
-async function searchTomtomPinpoint(pt, role) {
+
+async function searchTomtomPinpoint(pt, role, roadName = "") {
   const ttKey = (typeof getTomtomApiKey === "function") ? getTomtomApiKey() : "";
   if (!ttKey) return null;
-  const q = role === "entry" ? "出入口 IC 入口" : role === "exit" ? "出入口 IC 出口" : "JCT 料金所 IC";
+  const q = roadName ? `${roadName.replace(/(高速道路|自動車道)$/, "")} ${role === "entry" ? "入口" : role === "exit" ? "出口" : "JCT"}` : (role === "entry" ? "出入口 IC 入口" : role === "exit" ? "出入口 IC 出口" : "JCT 料金所 IC");
   try {
-    const res = await fetchWithTimeout(`https://api.tomtom.com/search/2/search/${encodeURIComponent(q)}.json?key=${encodeURIComponent(ttKey)}&lat=${pt.lat}&lon=${pt.lng}&radius=1600&limit=15&language=ja-JP`, {}, 2000);
-    if (!res.ok) return null;
-    const data = await res.json();
+    const [sRes, rRes] = await Promise.all([
+      fetchWithTimeout(`https://api.tomtom.com/search/2/search/${encodeURIComponent(q)}.json?key=${encodeURIComponent(ttKey)}&lat=${pt.lat}&lon=${pt.lng}&radius=2200&limit=15&language=ja-JP`, {}, 2000).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetchWithTimeout(`https://api.tomtom.com/search/2/reverseGeocode/${pt.lat},${pt.lng}.json?key=${encodeURIComponent(ttKey)}&language=ja-JP&radius=300`, {}, 2000).then(r => r.ok ? r.json() : null).catch(() => null)
+    ]);
     let best = null;
-    for (const r of (data?.results || [])) {
+    for (const r of (sRes?.results || [])) {
       const valid = cleanFacName(r.poi?.name || r.address?.freeformAddress || "", role, false);
       if (!valid) continue;
       const dist = r.dist ?? 999;
       const score = (role !== "switch" && /JCT$/.test(valid)) ? dist + 3000 : dist;
       if (!best || score < best.score) best = { name: valid, score };
     }
-    return best ? best.name : null;
-  } catch (e) { return null; }
+    if (best) return best.name;
+    const addr = rRes?.addresses?.[0]?.address;
+    if (addr) {
+      const area = (addr.municipalitySubdivision || addr.localName || addr.municipality || "").replace(/[0-9０-９丁目番地号\-−]/g, "").trim();
+      if (area.length >= 2) return role === "entry" ? `${area}付近 入口` : role === "exit" ? `${area}付近 出口` : `${area}付近 切替`;
+    }
+  } catch (e) {}
+  return null;
 }
-async function fastLookupFacility(pt, role) {
+
+async function fastLookupFacility(pt, role, roadName = "") {
   if (!pt) return null;
-  const key = `${role}_${pt.lat.toFixed(3)}_${pt.lng.toFixed(3)}`;
+  const key = `${role}_${roadName}_${pt.lat.toFixed(3)}_${pt.lng.toFixed(3)}`;
   if (_facCache.has(key)) return _facCache.get(key);
-  const [osmName, ttName] = await Promise.all([searchOsmPinpoint(pt, role), searchTomtomPinpoint(pt, role)]);
+  const [osmName, ttName] = await Promise.all([searchRoadJunctions(pt, role, roadName), searchTomtomPinpoint(pt, role, roadName)]);
   const hit = osmName || ttName || null;
   _facCache.set(key, hit);
   return hit;
@@ -194,11 +211,12 @@ async function resolveMissingFacilityNames(ctx) {
   let exitName = exitSteps.map(s => parseStepFac(s.inst, "exit")).find(Boolean) || null;
   const totalD = cumPath.length ? cumPath[cumPath.length - 1].d : tollEndD;
   const exitPt = ptAtDist(cumPath, Math.max(tollStartD, Math.min(tollEndD, totalD - 200)));
+  const lastRoad = curSeg?.roads?.slice(-1)[0] || entryStep.road || "";
 
   const [resolvedEntry, resolvedExit, ...resolvedSwitches] = await Promise.all([
-    entryName ? Promise.resolve(entryName) : fastLookupFacility(entryPt, "entry"),
-    exitName ? Promise.resolve(exitName) : fastLookupFacility(exitPt, "exit"),
-    ...segments.map(s => (!s.switchPt || s.switchKnown) ? Promise.resolve(s.switchKnown || null) : fastLookupFacility(s.switchPt, "switch"))
+    entryName ? Promise.resolve(entryName) : fastLookupFacility(entryPt, "entry", entryStep.road),
+    exitName ? Promise.resolve(exitName) : fastLookupFacility(exitPt, "exit", lastRoad),
+    ...segments.map(s => (!s.switchPt || s.switchKnown) ? Promise.resolve(s.switchKnown || null) : fastLookupFacility(s.switchPt, "switch", s.roads?.slice(-1)[0] || ""))
   ]);
 
   entryName = resolvedEntry;
