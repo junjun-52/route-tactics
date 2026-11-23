@@ -411,7 +411,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .card.mix .price-big { color: var(--orange-dark); }
 .card.local .price-big { color: var(--green); }
 
-/* 有料区間詳細タイムライン */
+/* 有料区間タイムライン（IC間に料金・距離・時間を配置） */
 .hw-detail-wrap {
   margin-top: 12px;
   border: 1px solid var(--border);
@@ -466,57 +466,46 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   border-color: var(--orange);
 }
 .hw-leg-block {
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 .hw-leg-block:last-child {
   margin-bottom: 0;
 }
 .hw-leg-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   font-size: 11px;
   font-weight: 800;
   color: var(--navy);
   background: #eef2f7;
   padding: 6px 9px;
   border-radius: 4px;
-  margin-bottom: 8px;
-}
-.hw-leg-toll {
-  color: var(--orange-dark);
-  white-space: nowrap;
+  margin-bottom: 10px;
 }
 .hw-timeline {
   position: relative;
   padding-left: 16px;
-  border-left: 2px solid #cbd5e1;
+  border-left: 2px solid #94a3b8;
   margin-left: 6px;
 }
-.hw-event {
+.hw-node {
   position: relative;
-  margin-bottom: 9px;
   font-size: 12px;
-  line-height: 1.45;
+  line-height: 1.4;
+  padding: 2px 0;
 }
-.hw-event:last-child {
-  margin-bottom: 0;
-}
-.hw-event-dot {
+.hw-node-dot {
   position: absolute;
   left: -22px;
-  top: 3px;
+  top: 4px;
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: var(--navy);
   border: 2px solid #fff;
-  box-shadow: 0 0 0 1px #cbd5e1;
+  box-shadow: 0 0 0 1px #94a3b8;
 }
-.hw-event.entry .hw-event-dot { background: var(--green); }
-.hw-event.jct .hw-event-dot { background: #2563eb; }
-.hw-event.toll .hw-event-dot { background: var(--orange); }
-.hw-event.exit .hw-event-dot { background: #dc2626; }
+.hw-node.entry .hw-node-dot { background: var(--green); }
+.hw-node.switch .hw-node-dot { background: var(--orange); }
+.hw-node.exit .hw-node-dot { background: #dc2626; }
 
 .hw-badge {
   display: inline-block;
@@ -524,14 +513,61 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   font-weight: 800;
   padding: 1px 6px;
   border-radius: 3px;
-  margin-right: 5px;
+  margin-right: 6px;
   vertical-align: middle;
 }
 .hw-badge.entry { background: #dcfce7; color: #166534; }
-.hw-badge.jct { background: #dbeafe; color: #1e40af; }
-.hw-badge.toll { background: #ffedd5; color: #9a3412; }
+.hw-badge.switch { background: #ffedd5; color: #9a3412; }
 .hw-badge.exit { background: #fee2e2; color: #991b1b; }
 
+/* ICとICの間に挟む区間ボックス */
+.hw-seg-box {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid var(--navy);
+  border-radius: 4px;
+  padding: 6px 10px;
+  margin: 6px 0;
+}
+.hw-seg-info {
+  min-width: 0;
+  flex: 1;
+}
+.hw-seg-road {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-main);
+  line-height: 1.35;
+}
+.hw-seg-meta {
+  font-size: 10px;
+  color: var(--text-sub);
+  margin-top: 1px;
+}
+.hw-seg-toll {
+  text-align: right;
+  white-space: nowrap;
+  background: #fff;
+  border: 1px solid #fed7aa;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+.hw-seg-toll-tag {
+  display: block;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--orange-dark);
+  line-height: 1.1;
+}
+.hw-seg-toll-val {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--navy);
+}
 .hw-empty {
   font-size: 11px;
   color: var(--text-sub);
