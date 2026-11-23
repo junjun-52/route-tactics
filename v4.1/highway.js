@@ -1,4 +1,4 @@
-// ===== 有料区間の入口IC・出口IC・区間別ETC料金タイムライン (V4.1) =====
+// ===== 有料区間の入口IC・出口IC・区間別ETC料金タイムライン (V4.1.1) =====
 let latestHwDetailHtml = "";
 let latestMixDetailHtml = "";
 
@@ -49,24 +49,20 @@ function extractDrivingRoad(inst) {
 }
 
 // 案内文からIC名・JCT名・出入口名・料金所名を抽出
-// role: "entry" | "switch" | "exit"
 function extractFacilityName(inst, role) {
   if (!inst) return null;
 
-  // 1. 明示的なIC・スマートIC・料金所・出入口（切替時はJCTも場所名として取得）
-  const pattern = (role === "switch")
-    ? /([一-龠ァ-ヶーA-Za-z0-9０-９]{2,15}?(?:スマートIC|スマートＩＣ|IC|ＩＣ|JCT|ＪＣＴ|本線料金所|料金所|出入口))/g
-    : /([一-龠ァ-ヶーA-Za-z0-9０-９]{2,15}?(?:スマートIC|スマートＩＣ|IC|ＩＣ|本線料金所|料金所|出入口))/g;
-
+  const pattern = /([一-龠ァ-ヶーA-Za-z0-9０-９]{2,15}?(?:スマートIC|スマートＩＣ|IC|ＩＣ|JCT|ＪＣＴ|本線料金所|料金所|出入口))/g;
   const explicitMatches = inst.match(pattern);
   if (explicitMatches) {
     for (const m of explicitMatches) {
       if (/^(料金所|出入口)$/.test(m)) continue;
+      if (role !== "switch" && /(JCT|ＪＣＴ)$/.test(m)) continue;
       return m.replace(/ＩＣ/g, "IC").replace(/ＪＣＴ/g, "JCT");
     }
   }
 
-  // 2. 「一宮中 入口」「黒川 出口」など固有名＋入口/出口
+  // 「一宮中 入口」「黒川 出口」など固有名＋入口/出口
   const ioRe = /([一-龠ァ-ヶーA-Za-z0-9０-９]{2,15})\s*(入口|出口)/g;
   let m;
   while ((m = ioRe.exec(inst)) !== null) {
@@ -76,7 +72,7 @@ function extractFacilityName(inst, role) {
     return `${prefix}${m[2]}`;
   }
 
-  // 3. 看板表示表記「（一宮中 の表示）」「（用賀 の表示）」から地名・ランプ名を抽出
+  // 看板表示表記「（一宮中 の表示）」「（用賀 の表示）」
   const signMatch = inst.match(/[（(]([^（）()\/]+?)\s*の表示[）)]/);
   if (signMatch) {
     const signText = signMatch[1].trim();
@@ -89,7 +85,6 @@ function extractFacilityName(inst, role) {
     }
   }
 
-  // 4. 出口案内で「出口を 浜松 方面の〜」のように方面名しか出ない場合の補完
   if (role === "exit") {
     const exitDir = inst.match(/出口を\s*([一-龠ァ-ヶーA-Za-z0-9０-９]{2,12}?)\s*方面/);
     if (exitDir) {
@@ -103,7 +98,7 @@ function extractFacilityName(inst, role) {
   return null;
 }
 
-// ===== 座標から最寄りの実際のIC・出入口・JCT・料金所名を自動補完 =====
+// ===== 座標から実際のIC・ランプ・JCT・料金所名を自動補完 =====
 function calcNodeDistMeters(lat1, lng1, lat2, lng2) {
   const R = 6371000;
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -113,99 +108,152 @@ function calcNodeDistMeters(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function isValidFacilityCandidate(name, role) {
-  if (!name) return false;
-  // 路線名だけのものは除外
-  if (/^(名古屋高速|首都高速|阪神高速|東名高速|名神高速|新東名|名二環|伊勢湾岸|東海北陸)/.test(name) && !/(IC|ＩＣ|JCT|ＪＣＴ|入口|出口|出入口|料金所)/.test(name)) {
-    return false;
-  }
-  // 入口検索時に「〜出口」を除外、出口検索時に「〜入口」を除外
-  if (role === "entry" && /出口$/.test(name) && !/出入口$/.test(name)) return false;
-  if (role === "exit" && /入口$/.test(name) && !/出入口$/.test(name)) return false;
+function cleanAndValidateFacility(rawName, role) {
+  if (!rawName) return null;
+  let name = String(rawName)
+    .replace(/\s+/g, "")
+    .replace(/ＩＣ/g, "IC")
+    .replace(/ＪＣＴ/g, "JCT")
+    .replace(/インターチェンジ/g, "IC")
+    .replace(/ジャンクション/g, "JCT");
 
-  return /(スマートIC|スマートＩＣ|IC|ＩＣ|JCT|ＪＣＴ|入口|出口|出入口|料金所|ランプ)/.test(name);
+  // 余分な路線名プレフィックスを除去（例：「名古屋高速16号一宮線一宮東入口」→「一宮東入口」）
+  name = name.replace(/^(?:名古屋高速[0-9号一宮線小牧線清須線都心環状線大高線東山線万場線楠線黒川線東海線]*|首都高速[0-9号渋谷線新宿線池袋線上野線向島線深川線台場線湾岸線都心環状線]*|阪神高速[0-9号線]*|東名高速道路|名神高速道路|新東名高速道路|名古屋第二環状自動車道|伊勢湾岸自動車道|東海北陸自動車道)/, "");
+
+  if (!name || name.length < 3 || name.length > 18) return null;
+  if (/^(入口|出口|出入口|料金所|IC|JCT|ランプ)$/.test(name)) return null;
+
+  // 入口検索時は「〜出口」を除外、出口検索時は「〜入口」を除外
+  if (role === "entry" && /出口$/.test(name) && !/出入口$/.test(name)) return null;
+  if (role === "exit" && /入口$/.test(name) && !/出入口$/.test(name)) return null;
+
+  if (/(スマートIC|IC|JCT|入口|出口|出入口|料金所|ランプ)/.test(name)) {
+    return name;
+  }
+  return null;
+}
+
+async function searchTomtomSingleKeyword(lat, lng, keyword, role, maxRadius = 1100) {
+  const ttKey = (typeof getTomtomApiKey === "function") ? getTomtomApiKey() : "";
+  if (!ttKey) return null;
+
+  try {
+    const url = `https://api.tomtom.com/search/2/search/${encodeURIComponent(keyword)}.json?key=${encodeURIComponent(ttKey)}&lat=${lat}&lon=${lng}&radius=${maxRadius}&limit=8&language=ja-JP`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const results = Array.isArray(data.results) ? data.results : [];
+
+    let bestName = null;
+    let bestDist = Infinity;
+
+    for (const r of results) {
+      const candidateRaw = r.poi?.name || r.address?.freeformAddress || "";
+      const valid = cleanAndValidateFacility(candidateRaw, role);
+      if (!valid) continue;
+
+      const dist = (typeof r.dist === "number")
+        ? r.dist
+        : (r.position ? calcNodeDistMeters(lat, lng, r.position.lat, r.position.lon) : 999);
+
+      if (dist <= maxRadius && dist < bestDist) {
+        bestDist = dist;
+        bestName = valid;
+      }
+    }
+    return bestName ? { name: bestName, dist: bestDist } : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function reverseGeocodeTomtom(lat, lng, role) {
+  const ttKey = (typeof getTomtomApiKey === "function") ? getTomtomApiKey() : "";
+  if (!ttKey) return null;
+
+  try {
+    const url = `https://api.tomtom.com/search/2/reverseGeocode/${lat},${lng}.json?key=${encodeURIComponent(ttKey)}&language=ja-JP&radius=250`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const addresses = Array.isArray(data.addresses) ? data.addresses : [];
+
+    for (const item of addresses) {
+      const addr = item.address || {};
+      const candidates = [addr.streetName, addr.freeformAddress, addr.localName];
+      for (const c of candidates) {
+        if (!c) continue;
+        // 住所文字列の中から「〇〇入口」「〇〇IC」「〇〇JCT」「〇〇料金所」を抽出
+        const m = String(c).match(/([一-龠ァ-ヶーA-Za-z0-9]{2,12}(?:スマートIC|IC|JCT|入口|出口|出入口|料金所))/);
+        if (m) {
+          const valid = cleanAndValidateFacility(m[1], role);
+          if (valid) return valid;
+        }
+      }
+    }
+  } catch (e) {
+    // 無視
+  }
+  return null;
+}
+
+function reverseGeocodeGoogleJs(lat, lng, role) {
+  return new Promise((resolve) => {
+    if (typeof google === "undefined" || !google.maps?.Geocoder) {
+      resolve(null);
+      return;
+    }
+    const geocoder = new google.maps.Geocoder();
+    geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+      if (status !== "OK" || !Array.isArray(results)) {
+        resolve(null);
+        return;
+      }
+      for (const r of results) {
+        const formatted = r.formatted_address || "";
+        const m = formatted.match(/([一-龠ァ-ヶーA-Za-z0-9]{2,12}(?:スマートIC|IC|JCT|入口|出口|出入口|料金所))/);
+        if (m) {
+          const valid = cleanAndValidateFacility(m[1], role);
+          if (valid) {
+            resolve(valid);
+            return;
+          }
+        }
+      }
+      resolve(null);
+    });
+  });
 }
 
 async function lookupNearestFacilityByCoords(latLng, role) {
   if (!latLng || typeof latLng.latitude !== "number" || typeof latLng.longitude !== "number") return null;
+  const lat = latLng.latitude;
+  const lng = latLng.longitude;
 
-  const queryMap = {
-    entry: "入口 IC 出入口 ランプ",
-    exit: "出口 IC 出入口 ランプ",
-    switch: "JCT ジャンクション 料金所 IC"
+  const keywordsByRole = {
+    entry: ["入口", "IC", "出入口"],
+    exit: ["出口", "IC", "出入口"],
+    switch: ["JCT", "料金所", "IC"]
   };
-  const textQuery = queryMap[role] || "IC 出入口 JCT";
+  const keywords = keywordsByRole[role] || ["IC", "JCT"];
 
-  // 1. Google Places API (New) で座標半径450m以内の施設を検索
-  try {
-    const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": API_KEY,
-        "X-Goog-FieldMask": "places.displayName,places.location"
-      },
-      body: JSON.stringify({
-        textQuery,
-        languageCode: "ja",
-        regionCode: "JP",
-        maxResultCount: 6,
-        locationBias: {
-          circle: {
-            center: { latitude: latLng.latitude, longitude: latLng.longitude },
-            radius: 450.0
-          }
-        }
-      })
-    });
+  // 1. TomTom Reverse Geocoding ＋ 単一キーワード検索を並列実行
+  const [revName, ...searchHits] = await Promise.all([
+    reverseGeocodeTomtom(lat, lng, role),
+    ...keywords.map(kw => searchTomtomSingleKeyword(lat, lng, kw, role, 1200))
+  ]);
 
-    if (res.ok) {
-      const data = await res.json();
-      const places = Array.isArray(data.places) ? data.places : [];
-      let bestName = null;
-      let bestDist = Infinity;
-
-      for (const p of places) {
-        const rawName = (p.displayName?.text || "").trim();
-        const cleanName = rawName.replace(/\s+/g, "").replace(/ＩＣ/g, "IC").replace(/ＪＣＴ/g, "JCT");
-        if (!isValidFacilityCandidate(cleanName, role)) continue;
-
-        const pLoc = p.location;
-        const dist = (pLoc && typeof pLoc.latitude === "number")
-          ? calcNodeDistMeters(latLng.latitude, latLng.longitude, pLoc.latitude, pLoc.longitude)
-          : 999;
-
-        if (dist <= 600 && dist < bestDist) {
-          bestDist = dist;
-          bestName = cleanName;
-        }
-      }
-      if (bestName) return bestName;
-    }
-  } catch (e) {
-    // フォールバックへ
+  const validHits = searchHits.filter(Boolean).sort((a, b) => a.dist - b.dist);
+  if (validHits.length > 0) {
+    return validHits[0].name;
+  }
+  if (revName) {
+    return revName;
   }
 
-  // 2. フォールバック：TomTom APIキーが有効な場合は TomTom Search API でも検索
-  const ttKey = (typeof getTomtomApiKey === "function") ? getTomtomApiKey() : "";
-  if (ttKey) {
-    try {
-      const url = `https://api.tomtom.com/search/2/search/${encodeURIComponent(textQuery)}.json?key=${encodeURIComponent(ttKey)}&lat=${latLng.latitude}&lon=${latLng.longitude}&radius=500&limit=6&language=ja-JP`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        const results = Array.isArray(data.results) ? data.results : [];
-        for (const r of results) {
-          const poiName = (r.poi?.name || "").replace(/\s+/g, "").replace(/ＩＣ/g, "IC").replace(/ＪＣＴ/g, "JCT");
-          if (isValidFacilityCandidate(poiName, role)) {
-            return poiName;
-          }
-        }
-      }
-    } catch (e) {
-      // 無視
-    }
-  }
+  // 2. フォールバック：Google Maps JS 標準 Geocoder
+  const gName = await reverseGeocodeGoogleJs(lat, lng, role);
+  if (gName) return gName;
 
   return null;
 }
@@ -224,11 +272,10 @@ async function resolveMissingFacilityNames(items) {
         item.name = resolved;
       }
     } else {
-      // どうしても特定できない場合でも「名古屋高速16号 入口」のような誤解を招く表現を避ける
       if (item.type === "entry") {
-        item.name = item.roadHint ? `${item.roadHint}（進入IC・ランプ）` : "有料区間 進入IC";
+        item.name = item.roadHint ? `${item.roadHint} 進入ランプ` : "有料区間 進入IC";
       } else if (item.type === "exit") {
-        item.name = item.roadHint ? `${item.roadHint}（流出IC・ランプ）` : "有料区間 流出IC";
+        item.name = item.roadHint ? `${item.roadHint} 流出ランプ` : "有料区間 流出IC";
       } else if (item.type === "switch") {
         item.name = item.switchTransition || "路線切替・料金所";
       }
@@ -371,14 +418,31 @@ function extractHighwayTimeline(route, legToll) {
         exitingToll = false;
       }
 
-      // ① 有料区間の入口
+      // ① 有料区間の入口（直前が短い進入ランプステップならその開始座標を優先）
       if (!inToll) {
         inToll = true;
         currentRoad = effectiveRoad;
         currentOperator = stepOp;
 
         let entryName = extractFacilityName(inst, "entry");
-        for (let back = 1; back <= 3 && !entryName && (i - back) >= 0; back++) {
+        let entryCoords = stepLatLng;
+
+        if (i > 0) {
+          const prevStep = steps[i - 1];
+          const prevInst = (prevStep?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim();
+          const prevManeuver = prevStep?.navigationInstruction?.maneuver || "";
+          const prevDist = prevStep?.distanceMeters || 0;
+
+          if (!entryName) {
+            entryName = extractFacilityName(prevInst, "entry");
+          }
+          // 直前ステップが短いランプ進入（1.5km未満、またはRAMP案内）なら、その開始地点こそが真の入口
+          if ((prevManeuver.includes("RAMP") || /に入る|方面/.test(prevInst)) && prevDist < 1500 && prevStep?.startLocation?.latLng) {
+            entryCoords = prevStep.startLocation.latLng;
+          }
+        }
+
+        for (let back = 2; back <= 3 && !entryName && (i - back) >= 0; back++) {
           const prevInst = (steps[i - back]?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim();
           entryName = extractFacilityName(prevInst, "entry");
         }
@@ -389,7 +453,7 @@ function extractHighwayTimeline(route, legToll) {
           badgeText: "入口",
           name: entryName || (effectiveRoad ? `${effectiveRoad}（進入IC）` : "有料区間入口"),
           needsLookup: !entryName,
-          latLng: stepLatLng,
+          latLng: entryCoords,
           roadHint: effectiveRoad
         });
         startNewSegment(effectiveRoad, stepOp);
