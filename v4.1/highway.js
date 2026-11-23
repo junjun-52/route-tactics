@@ -1,4 +1,4 @@
-// ===== 動的道路データ参照型 有料区間IC・JCT・ETCタイムライン (V4.1.6) =====
+// ===== 動的道路データ参照型 有料区間IC・JCT・ETCタイムライン (V4.1.7) =====
 let latestHwDetailHtml = "", latestMixDetailHtml = "";
 const ROAD_RE = /([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:自動車道|高速道路|有料道路|連絡道路|高速[0-9０-９号線]*|名二環|伊勢湾岸|セントレアライン|知多半島道路|知多横断道路|南知多道路|東海環状|東海北陸|東名|名神|新東名|新名神|中央道|北陸道|関越|東北道|常磐道|山陽道|中国道|九州道|圏央道|外環|首都高|阪神高速|名古屋高速|福岡高速|北九州高速|広島高速))/g;
 const OP_LABELS = { urban_nagoya: "名古屋高速", urban_tokyo: "首都高速", urban_hanshin: "阪神高速", urban_fukuoka: "福岡・北九州高速", urban_hiroshima: "広島高速", public_aichi: "知多半島・セントレアライン", honshi: "本四高速", nexco: "NEXCO高速" };
@@ -81,8 +81,10 @@ async function fetchLiveOsmCorridor(cumPath) {
   if (!cumPath.length) return { junctions: [], motorways: [] };
   const totalD = cumPath[cumPath.length - 1].d, stepD = Math.max(1500, totalD / 28), pts = [];
   for (let d = 0; d <= totalD; d += stepD) { const p = ptAtDist(cumPath, d); if (p) pts.push(`${p.lat.toFixed(4)},${p.lng.toFixed(4)}`); }
+  const lastP = cumPath[cumPath.length - 1];
+  if (lastP) pts.push(`${lastP.lat.toFixed(4)},${lastP.lng.toFixed(4)}`);
   const polyStr = pts.join(",");
-  const q = `[out:json][timeout:8];(node["highway"="motorway_junction"]["name"](around:250,${polyStr});way["highway"="motorway_link"]["name"](around:200,${polyStr});node["barrier"="toll_booth"]["name"](around:200,${polyStr});way["highway"="motorway"]["name"](around:120,${polyStr}););out center;`;
+  const q = `[out:json][timeout:8];(node["highway"="motorway_junction"]["name"](around:350,${polyStr});way["highway"="motorway_link"]["name"](around:250,${polyStr});node["barrier"="toll_booth"]["name"](around:250,${polyStr});way["highway"="motorway"]["name"](around:120,${polyStr}););out center;`;
   for (const ep of ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]) {
     try {
       const res = await fetch(ep, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" }, body: "data=" + encodeURIComponent(q) });
@@ -99,12 +101,15 @@ async function fetchLiveOsmCorridor(cumPath) {
   }
   return { junctions: [], motorways: [] };
 }
-async function searchTomtomFallback(pt, role, roadHint) {
+async function searchTomtomFallback(ptList, role, roadHint) {
   const ttKey = (typeof getTomtomApiKey === "function") ? getTomtomApiKey() : "";
-  if (!ttKey || !pt) return null;
-  const kws = [...(roadHint ? [roadHint] : []), ...(role === "entry" ? ["出入口", "IC"] : role === "exit" ? ["出入口", "IC", "出口"] : ["JCT", "料金所", "IC"])];
+  const pts = (Array.isArray(ptList) ? ptList : [ptList]).filter(Boolean);
+  if (!ttKey || !pts.length) return null;
+  const kws = [...(roadHint ? [roadHint] : []), ...(role === "entry" ? ["出入口", "IC"] : role === "exit" ? ["IC", "出口", "出入口"] : ["JCT", "料金所", "IC"])];
   try {
-    const datas = await Promise.all(kws.map(kw => fetch(`https://api.tomtom.com/search/2/search/${encodeURIComponent(kw)}.json?key=${encodeURIComponent(ttKey)}&lat=${pt.lat}&lon=${pt.lng}&radius=1600&limit=15&language=ja-JP`).then(r => r.ok ? r.json() : null).catch(() => null)));
+    const datas = await Promise.all(pts.slice(0, 2).flatMap(pt => kws.map(kw =>
+      fetch(`https://api.tomtom.com/search/2/search/${encodeURIComponent(kw)}.json?key=${encodeURIComponent(ttKey)}&lat=${pt.lat}&lon=${pt.lng}&radius=1800&limit=15&language=ja-JP`).then(r => r.ok ? r.json() : null).catch(() => null)
+    )));
     let best = null;
     for (const d of datas) for (const r of (d?.results || [])) {
       const valid = cleanFacName(r.poi?.name || r.address?.freeformAddress || "", role, false);
@@ -113,7 +118,7 @@ async function searchTomtomFallback(pt, role, roadHint) {
     return best ? best.name : null;
   } catch (e) { return null; }
 }
-function findBestOsmJunction(junctions, ptList, role, maxDistM = 1300) {
+function findBestOsmJunction(junctions, ptList, role, maxDistM = 1600) {
   let best = null;
   for (const pt of ptList) {
     if (!pt) continue;
@@ -148,7 +153,7 @@ function extractHighwayTimeline(route, legToll) {
       const road = roadMatch ? normRoad(roadMatch[roadMatch.length - 1]) : "";
       rawSteps.push({ inst, man, d, sec, sD, eD: cumD, isToll, isExit, road });
       if (isToll && tollStartD === null) tollStartD = sD;
-      if (isToll) tollEndD = cumD;
+      if (isToll || (inToll && isExit)) tollEndD = cumD;
       inToll = isToll && !isExit;
     }
   }
@@ -160,17 +165,15 @@ async function resolveMissingFacilityNames(ctx) {
   const { rawSteps, cumPath, tollStartD, tollEndD, legToll } = ctx;
   const osm = await fetchLiveOsmCorridor(cumPath);
 
-  // 1. 入口ICの特定（ランプ入口〜合流点）
   const entryStepIdx = rawSteps.findIndex(s => s.isToll);
   const entryStep = rawSteps[entryStepIdx];
   const prevStep = entryStepIdx > 0 ? rawSteps[entryStepIdx - 1] : null;
   let entryName = parseStepFac(entryStep.inst, "entry") || (prevStep ? parseStepFac(prevStep.inst, "entry") : null);
   if (!entryName) {
     const entryPts = [prevStep && prevStep.d < 1500 ? ptAtDist(cumPath, prevStep.sD) : null, ptAtDist(cumPath, Math.max(0, tollStartD - 250)), ptAtDist(cumPath, tollStartD), ptAtDist(cumPath, tollStartD + 300)].filter(Boolean);
-    entryName = findBestOsmJunction(osm.junctions, entryPts, "entry", 1400) || await searchTomtomFallback(entryPts[0], "entry", entryStep.road);
+    entryName = findBestOsmJunction(osm.junctions, entryPts, "entry", 1400) || await searchTomtomFallback(entryPts, "entry", entryStep.road);
   }
 
-  // 2. 有料区間内の走行路線・JCT切替・区間分割（1.5km刻みでOSMの最新路線名をスキャン）
   const segments = [];
   let curSeg = null;
   const scanStep = 1500;
@@ -193,7 +196,7 @@ async function resolveMissingFacilityNames(ctx) {
       segments.push(curSeg);
     } else if (curSeg.op !== op) {
       const swPt = ptAtDist(cumPath, d);
-      const jctName = findBestOsmJunction(osm.junctions, [swPt], "switch", 1400) || await searchTomtomFallback(swPt, "switch", roadName);
+      const jctName = findBestOsmJunction(osm.junctions, [swPt], "switch", 1400) || await searchTomtomFallback([swPt], "switch", roadName);
       const trans = `${OP_LABELS[curSeg.op] || "高速"} ➔ ${OP_LABELS[op] || "高速"}`;
       curSeg.switchNode = jctName ? `${jctName}（${trans}）` : trans;
       curSeg = { roads: roadName ? [roadName] : [], distM: segLen, sec: stepAtD.d ? (stepAtD.sec * segLen / stepAtD.d) : 60, op, startD: d };
@@ -205,16 +208,15 @@ async function resolveMissingFacilityNames(ctx) {
     }
   }
 
-  // 3. 出口ICの特定
-  const lastTollStep = [...rawSteps].reverse().find(s => s.isToll || s.isExit);
-  let exitName = lastTollStep ? parseStepFac(lastTollStep.inst, "exit") : null;
+  const exitSteps = [...rawSteps].reverse().filter(s => s.isToll || s.isExit).slice(0, 2);
+  let exitName = exitSteps.map(s => parseStepFac(s.inst, "exit")).find(Boolean) || null;
   if (!exitName) {
-    const exitPts = [ptAtDist(cumPath, Math.max(tollStartD, tollEndD - 450)), ptAtDist(cumPath, tollEndD)].filter(Boolean);
+    const totalD = cumPath.length ? cumPath[cumPath.length - 1].d : tollEndD;
+    const exitPts = [ptAtDist(cumPath, tollEndD), ptAtDist(cumPath, Math.max(tollStartD, tollEndD - 450)), ptAtDist(cumPath, Math.max(0, totalD - 300)), ptAtDist(cumPath, totalD)].filter(Boolean);
     const lastRoad = curSeg?.roads?.[curSeg.roads.length - 1] || "";
-    exitName = findBestOsmJunction(osm.junctions, exitPts, "exit", 1400) || await searchTomtomFallback(exitPts[0], "exit", lastRoad);
+    exitName = findBestOsmJunction(osm.junctions, exitPts, "exit", 1800) || await searchTomtomFallback(exitPts, "exit", lastRoad);
   }
 
-  // 4. ETC料金按分＆タイムライン構築
   if (segments.length === 1) { segments[0].toll = legToll || 0; segments[0].isEst = false; }
   else if (segments.length > 1 && legToll > 0) {
     const w = segments.map(s => s.op.startsWith("urban_") ? Math.min(1320, Math.max(300, 300 + (s.distM / 1000) * 45)) : Math.max(250, 150 + (s.distM / 1000) * 25));
