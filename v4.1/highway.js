@@ -1,4 +1,4 @@
-// ===== 高速レスポンス型 有料区間IC・JCT・ETCタイムライン (V4.1.8) =====
+// ===== 高速＆高精度 有料区間IC・JCT・ETCタイムライン (V4.1.9) =====
 let latestHwDetailHtml = "", latestMixDetailHtml = "";
 const ROAD_RE = /([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:自動車道|高速道路|有料道路|連絡道路|高速[0-9０-９号線]*|名二環|伊勢湾岸|セントレアライン|知多半島道路|知多横断道路|南知多道路|東海環状|東海北陸|東名|名神|新東名|新名神|中央道|北陸道|関越|東北道|常磐道|山陽道|中国道|九州道|圏央道|外環|首都高|阪神高速|名古屋高速|福岡高速|北九州高速|広島高速))/g;
 const OP_LABELS = { urban_nagoya: "名古屋高速", urban_tokyo: "首都高速", urban_hanshin: "阪神高速", urban_fukuoka: "福岡・北九州高速", urban_hiroshima: "広島高速", public_aichi: "知多半島・セントレアライン", honshi: "本四高速", nexco: "NEXCO高速" };
@@ -55,14 +55,16 @@ function ptAtDist(cum, targetD) {
   if (targetD <= 0) return cum[0];
   return cum.find(p => p.d >= targetD) || cum[cum.length - 1];
 }
-function cleanFacName(raw, role) {
+function cleanFacName(raw, role, allowBare = false) {
   if (!raw) return null;
   let n = String(raw).replace(/\s+/g, "").replace(/ＩＣ/g, "IC").replace(/ＪＣＴ/g, "JCT").replace(/インターチェンジ/g, "IC").replace(/ジャンクション/g, "JCT").replace(/[（(][^）)]*[）)]/g, "")
     .replace(/^(?:名古屋高速[0-9号一宮線小牧線清須線都心環状線大高線東山線万場線楠線黒川線東海線]*|首都高速[0-9号渋谷線新宿線池袋線上野線向島線深川線台場線湾岸線都心環状線]*|阪神高速[0-9号線]*|東名高速道路|名神高速道路|新東名高速道路|名古屋第二環状自動車道|伊勢湾岸自動車道|東海北陸自動車道|知多半島道路|セントレアライン|中部国際空港連絡道路)/, "");
   if (!n || n.length < 2 || n.length > 16 || /^(入口|出口|出入口|料金所|IC|JCT|ランプ|本線|上り|下り)$/.test(n) || /(駐車場|ビル|公園|駅|店|病院|ホテル|ターミナル)/.test(n)) return null;
   if (role === "entry" && /出口$/.test(n) && !/出入口$/.test(n)) return null;
   if (role === "exit" && /入口$/.test(n) && !/出入口$/.test(n)) return null;
-  return /(スマートIC|IC|JCT|入口|出口|出入口|料金所|ランプ)/.test(n) ? n : null;
+  if (/(スマートIC|IC|JCT|入口|出口|出入口|料金所|ランプ)/.test(n)) return n;
+  if (allowBare && !new RegExp(ROAD_RE.source).test(n)) return role === "entry" ? `${n}入口` : role === "exit" ? `${n}出口` : `${n}JCT`;
+  return null;
 }
 function parseStepFac(inst, role) {
   if (!inst) return null;
@@ -76,50 +78,59 @@ function parseStepFac(inst, role) {
   }
   return null;
 }
-
-async function fetchWithTimeout(url, opts = {}, ms = 2200) {
-  const ctrl = new AbortController();
-  const id = setTimeout(() => ctrl.abort(), ms);
-  try { return await fetch(url, { ...opts, signal: ctrl.signal }); }
-  finally { clearTimeout(id); }
+async function fetchWithTimeout(url, opts = {}, ms = 2500) {
+  const ctrl = new AbortController(), id = setTimeout(() => ctrl.abort(), ms);
+  try { return await fetch(url, { ...opts, signal: ctrl.signal }); } finally { clearTimeout(id); }
 }
-
-async function fastLookupFacility(pt, role, roadHint) {
-  if (!pt) return null;
-  const cacheKey = `${role}_${pt.lat.toFixed(3)}_${pt.lng.toFixed(3)}`;
-  if (_facCache.has(cacheKey)) return _facCache.get(cacheKey);
-
+async function searchOsmPinpoint(pt, role) {
+  const q = `[out:json][timeout:3];(node["highway"="motorway_junction"]["name"](around:1200,${pt.lat},${pt.lng});way["highway"="motorway_link"]["name"](around:1200,${pt.lat},${pt.lng});node["barrier"="toll_booth"]["name"](around:1200,${pt.lat},${pt.lng}););out center;`;
+  for (const ep of ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]) {
+    try {
+      const res = await fetchWithTimeout(ep, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" }, body: "data=" + encodeURIComponent(q) }, 2400);
+      if (!res.ok) continue;
+      const data = await res.json();
+      let best = null;
+      for (const el of (data.elements || [])) {
+        const eLat = el.lat ?? el.center?.lat, eLon = el.lon ?? el.center?.lon;
+        if (typeof eLat !== "number") continue;
+        const valid = cleanFacName(el.tags?.name || el.tags?.["name:ja"] || "", role, true);
+        if (!valid) continue;
+        const d = distM(pt.lat, pt.lng, eLat, eLon);
+        const score = (role !== "switch" && /JCT$/.test(valid)) ? d + 3000 : d;
+        if (!best || score < best.score) best = { name: valid, score };
+      }
+      if (best) return best.name;
+    } catch (e) {}
+  }
+  return null;
+}
+async function searchTomtomPinpoint(pt, role) {
   const ttKey = (typeof getTomtomApiKey === "function") ? getTomtomApiKey() : "";
   if (!ttKey) return null;
-
   const q = role === "entry" ? "出入口 IC 入口" : role === "exit" ? "出入口 IC 出口" : "JCT 料金所 IC";
   try {
-    const [sRes, rRes] = await Promise.all([
-      fetchWithTimeout(`https://api.tomtom.com/search/2/search/${encodeURIComponent(q)}.json?key=${encodeURIComponent(ttKey)}&lat=${pt.lat}&lon=${pt.lng}&radius=1600&limit=15&language=ja-JP`, {}, 2000).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetchWithTimeout(`https://api.tomtom.com/search/2/reverseGeocode/${pt.lat},${pt.lng}.json?key=${encodeURIComponent(ttKey)}&language=ja-JP&radius=350`, {}, 2000).then(r => r.ok ? r.json() : null).catch(() => null)
-    ]);
-
+    const res = await fetchWithTimeout(`https://api.tomtom.com/search/2/search/${encodeURIComponent(q)}.json?key=${encodeURIComponent(ttKey)}&lat=${pt.lat}&lon=${pt.lng}&radius=1600&limit=15&language=ja-JP`, {}, 2000);
+    if (!res.ok) return null;
+    const data = await res.json();
     let best = null;
-    for (const r of (sRes?.results || [])) {
-      const valid = cleanFacName(r.poi?.name || r.address?.freeformAddress || "", role);
+    for (const r of (data?.results || [])) {
+      const valid = cleanFacName(r.poi?.name || r.address?.freeformAddress || "", role, false);
       if (!valid) continue;
       const dist = r.dist ?? 999;
-      const score = (role !== "switch" && /JCT$/.test(valid)) ? dist + 2500 : dist;
+      const score = (role !== "switch" && /JCT$/.test(valid)) ? dist + 3000 : dist;
       if (!best || score < best.score) best = { name: valid, score };
     }
-    if (best) { _facCache.set(cacheKey, best.name); return best.name; }
-
-    for (const item of (rRes?.addresses || [])) {
-      const a = item.address || {};
-      for (const c of [a.streetName, a.freeformAddress, a.localName]) {
-        const m = c && String(c).match(/([一-龠ァ-ヶーA-Za-z0-9]{2,12}(?:スマートIC|IC|JCT|入口|出口|出入口|料金所))/);
-        const valid = m && cleanFacName(m[1], role);
-        if (valid) { _facCache.set(cacheKey, valid); return valid; }
-      }
-    }
-  } catch (e) {}
-  _facCache.set(cacheKey, null);
-  return null;
+    return best ? best.name : null;
+  } catch (e) { return null; }
+}
+async function fastLookupFacility(pt, role) {
+  if (!pt) return null;
+  const key = `${role}_${pt.lat.toFixed(3)}_${pt.lng.toFixed(3)}`;
+  if (_facCache.has(key)) return _facCache.get(key);
+  const [osmName, ttName] = await Promise.all([searchOsmPinpoint(pt, role), searchTomtomPinpoint(pt, role)]);
+  const hit = osmName || ttName || null;
+  _facCache.set(key, hit);
+  return hit;
 }
 
 function extractHighwayTimeline(route, legToll) {
@@ -127,7 +138,6 @@ function extractHighwayTimeline(route, legToll) {
   const cumPath = decodeCumPath(route.polyline?.encodedPolyline || "");
   let cumD = 0, inToll = false, tollStartD = null, tollEndD = null;
   const rawSteps = [];
-
   for (const leg of route.legs) {
     for (const step of (leg.steps || [])) {
       const inst = (step?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim();
@@ -152,7 +162,6 @@ async function resolveMissingFacilityNames(ctx) {
   if (!ctx || !ctx.rawSteps || ctx.tollStartD === null) return [];
   const { rawSteps, cumPath, tollStartD, tollEndD, legToll } = ctx;
 
-  // 1. ステップ情報から即座に区間分割＆候補名抽出（待ち時間0ms）
   const entryStepIdx = rawSteps.findIndex(s => s.isToll);
   const entryStep = rawSteps[entryStepIdx];
   const prevStep = entryStepIdx > 0 ? rawSteps[entryStepIdx - 1] : null;
@@ -169,9 +178,8 @@ async function resolveMissingFacilityNames(ctx) {
       curSeg = { roads: roadName ? [roadName] : [], distM: s.d, sec: s.sec, op, startD: s.sD };
       segments.push(curSeg);
     } else if (curSeg.op !== op) {
-      const swName = parseStepFac(s.inst, "switch");
       curSeg.switchPt = ptAtDist(cumPath, s.sD);
-      curSeg.switchKnown = swName;
+      curSeg.switchKnown = parseStepFac(s.inst, "switch");
       curSeg.switchTrans = `${OP_LABELS[curSeg.op] || "高速"} ➔ ${OP_LABELS[op] || "高速"}`;
       curSeg = { roads: roadName ? [roadName] : [], distM: s.d, sec: s.sec, op, startD: s.sD };
       segments.push(curSeg);
@@ -185,13 +193,12 @@ async function resolveMissingFacilityNames(ctx) {
   const exitSteps = [...rawSteps].reverse().filter(s => s.isToll || s.isExit).slice(0, 2);
   let exitName = exitSteps.map(s => parseStepFac(s.inst, "exit")).find(Boolean) || null;
   const totalD = cumPath.length ? cumPath[cumPath.length - 1].d : tollEndD;
-  const exitPt = ptAtDist(cumPath, Math.max(tollStartD, Math.min(tollEndD, totalD - 250)));
+  const exitPt = ptAtDist(cumPath, Math.max(tollStartD, Math.min(tollEndD, totalD - 200)));
 
-  // 2. 不足しているIC名だけをTomTomで全並列取得（最大2秒タイムアウト）
   const [resolvedEntry, resolvedExit, ...resolvedSwitches] = await Promise.all([
-    entryName ? Promise.resolve(entryName) : fastLookupFacility(entryPt, "entry", entryStep.road),
-    exitName ? Promise.resolve(exitName) : fastLookupFacility(exitPt, "exit", curSeg?.roads?.slice(-1)[0] || ""),
-    ...segments.map(s => (!s.switchPt || s.switchKnown) ? Promise.resolve(s.switchKnown || null) : fastLookupFacility(s.switchPt, "switch", ""))
+    entryName ? Promise.resolve(entryName) : fastLookupFacility(entryPt, "entry"),
+    exitName ? Promise.resolve(exitName) : fastLookupFacility(exitPt, "exit"),
+    ...segments.map(s => (!s.switchPt || s.switchKnown) ? Promise.resolve(s.switchKnown || null) : fastLookupFacility(s.switchPt, "switch"))
   ]);
 
   entryName = resolvedEntry;
@@ -203,7 +210,6 @@ async function resolveMissingFacilityNames(ctx) {
     }
   });
 
-  // 3. ETC料金按分＆タイムライン構築
   if (segments.length === 1) { segments[0].toll = legToll || 0; segments[0].isEst = false; }
   else if (segments.length > 1 && legToll > 0) {
     const w = segments.map(s => s.op.startsWith("urban_") ? Math.min(1320, Math.max(300, 300 + (s.distM / 1000) * 45)) : Math.max(250, 150 + (s.distM / 1000) * 25));
