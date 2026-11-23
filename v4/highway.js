@@ -15,10 +15,21 @@ const OPERATOR_LABELS = {
   nexco: "NEXCO高速"
 };
 
+function normalizeRoadName(name) {
+  if (!name) return "";
+  // 全角英数字を半角に統一
+  let s = name.replace(/[０-９Ａ-Ｚａ-ｚ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
+  if (s === "第二東海自動車道") return "新東名高速道路";
+  if (s === "新東名") return "新東名高速道路";
+  if (s === "名二環") return "名古屋第二環状自動車道";
+  if (s === "東京都自動車道") return "首都高速";
+  return s;
+}
+
 function detectTollOperator(roadName) {
   if (!roadName) return null;
   if (/名古屋高速/.test(roadName)) return "urban_nagoya";
-  if (/首都高/.test(roadName)) return "urban_tokyo";
+  if (/首都高|東京都自動車道/.test(roadName)) return "urban_tokyo";
   if (/阪神高速/.test(roadName)) return "urban_hanshin";
   if (/福岡高速|北九州高速/.test(roadName)) return "urban_fukuoka";
   if (/広島高速/.test(roadName)) return "urban_hiroshima";
@@ -28,29 +39,35 @@ function detectTollOperator(roadName) {
 }
 
 function extractDrivingRoad(inst) {
+  if (!inst) return "";
   const withoutDir = inst.replace(/[^\s\/（）()]+?\s*方面の\s*/g, "");
   const matches = withoutDir.match(ROAD_NAME_RE);
   if (matches && matches.length > 0) {
-    return matches[matches.length - 1];
+    return normalizeRoadName(matches[matches.length - 1]);
   }
   const fallback = inst.match(ROAD_NAME_RE);
-  return (fallback && fallback.length > 0) ? fallback[fallback.length - 1] : "";
+  return (fallback && fallback.length > 0) ? normalizeRoadName(fallback[fallback.length - 1]) : "";
 }
 
-function extractFacilityName(inst, mode) {
+// 案内文からIC名・JCT名・出入口名・料金所名を抽出
+// role: "entry" | "switch" | "exit"
+function extractFacilityName(inst, role) {
   if (!inst) return null;
 
-  // 1. 明示的なIC・スマートIC・料金所・出入口名を最優先（JCTは除外）
-  const explicitRe = /([一-龠ァ-ヶーA-Za-z0-9０-９]{2,15}?(?:スマートIC|スマートＩＣ|IC|ＩＣ|本線料金所|料金所|出入口))/g;
-  const explicitMatches = inst.match(explicitRe);
+  // 1. 明示的なIC・スマートIC・料金所・出入口（切替時はJCTも場所名として取得）
+  const pattern = (role === "switch")
+    ? /([一-龠ァ-ヶーA-Za-z0-9０-９]{2,15}?(?:スマートIC|スマートＩＣ|IC|ＩＣ|JCT|ＪＣＴ|本線料金所|料金所|出入口))/g
+    : /([一-龠ァ-ヶーA-Za-z0-9０-９]{2,15}?(?:スマートIC|スマートＩＣ|IC|ＩＣ|本線料金所|料金所|出入口))/g;
+
+  const explicitMatches = inst.match(pattern);
   if (explicitMatches) {
     for (const m of explicitMatches) {
       if (/^(料金所|出入口)$/.test(m)) continue;
-      return m;
+      return m.replace(/ＩＣ/g, "IC").replace(/ＪＣＴ/g, "JCT");
     }
   }
 
-  // 2. 「黒川 出口」「一宮中 入口」のようにスペース有無を含む固有名＋入口/出口
+  // 2. 「一宮中 入口」「黒川 出口」など固有名＋入口/出口
   const ioRe = /([一-龠ァ-ヶーA-Za-z0-9０-９]{2,15})\s*(入口|出口)/g;
   let m;
   while ((m = ioRe.exec(inst)) !== null) {
@@ -60,8 +77,21 @@ function extractFacilityName(inst, mode) {
     return `${prefix}${m[2]}`;
   }
 
-  // 3. 出口案内で「出口を 新潟西 方面の〜」のように方面名しか出ない場合の補完
-  if (mode === "exit") {
+  // 3. 看板表示表記「（一宮中 の表示）」「（用賀 の表示）」から地名・ランプ名を抽出
+  const signMatch = inst.match(/[（(]([^（）()\/]+?)\s*の表示[）)]/);
+  if (signMatch) {
+    const signText = signMatch[1].trim();
+    const isRoad = new RegExp(ROAD_NAME_RE.source).test(signText);
+    const isGeneral = /^(国道|県道|都道|府道|市道|市街|方面|一般道|有料)/.test(signText);
+    if (!isRoad && !isGeneral && signText.length >= 2 && signText.length <= 12) {
+      if (role === "entry" && !/(入口|IC)$/.test(signText)) return `${signText}入口`;
+      if (role === "exit" && !/(出口|IC)$/.test(signText)) return `${signText}出口`;
+      return signText;
+    }
+  }
+
+  // 4. 出口案内で「出口を 浜松 方面の〜」のように方面名しか出ない場合の補完
+  if (role === "exit") {
     const exitDir = inst.match(/出口を\s*([一-龠ァ-ヶーA-Za-z0-9０-９]{2,12}?)\s*方面/);
     if (exitDir) {
       const place = exitDir[1];
@@ -155,10 +185,15 @@ function extractHighwayTimeline(route, legToll) {
       const maneuver = step?.navigationInstruction?.maneuver || "";
       const distM = step.distanceMeters || 0;
       const sec = parseInt((step.staticDuration || "0s").replace("s", ""), 10) || 0;
-      const isTollStep = /有料区間|有料道路/.test(inst);
-      const isExit = maneuver.includes("OFF_RAMP") || /出口を|出口へ|降りる|出る/.test(inst);
 
-      // 有料区間から一般道へ出た瞬間（「有料区間」の文字が消えた出口ステップもここで出口として拾う）
+      const hasTollTag = /有料区間|有料道路/.test(inst);
+      const stepRoad = extractDrivingRoad(inst);
+      const isGeneralRoad = /(国道|県道|府道|都道|市道|町道|通り|交差点)/.test(inst);
+      const isExitManeuver = maneuver.includes("OFF_RAMP") || /出口を|出口へ|降りる|出る/.test(inst);
+
+      // 有料区間走行中かどうかの判定（高速本線走行中は途中で「有料区間」タグが抜けても継続）
+      const isTollStep = hasTollTag || (inToll && !isGeneralRoad && !isExitManeuver);
+
       if (!isTollStep) {
         if (inToll) {
           let exitName = extractFacilityName(inst, "exit");
@@ -182,13 +217,13 @@ function extractHighwayTimeline(route, legToll) {
         continue;
       }
 
-      const stepRoad = extractDrivingRoad(inst) || currentRoad;
-      const stepOp = detectTollOperator(stepRoad) || currentOperator || "nexco";
+      const effectiveRoad = stepRoad || currentRoad;
+      const stepOp = detectTollOperator(effectiveRoad) || currentOperator || "nexco";
       const isTollGate = /本線料金所|料金所/.test(inst);
 
       // 出口ICを通過した直後のランプ・出口料金所ステップは直前区間に吸収
       if (exitingToll) {
-        const isReEntry = /入口|に入る|合流/.test(inst) && !isExit && !isTollGate && !/国道|県道|市道/.test(inst);
+        const isReEntry = /入口|に入る|合流/.test(inst) && !isExitManeuver && !isTollGate && !isGeneralRoad;
         if (!isReEntry) {
           if (lastEndedSeg) {
             lastEndedSeg.distM += distM;
@@ -202,7 +237,7 @@ function extractHighwayTimeline(route, legToll) {
       // ① 有料区間の入口（現在または最大2ステップ手前の一般道案内からIC名を探索）
       if (!inToll) {
         inToll = true;
-        currentRoad = stepRoad;
+        currentRoad = effectiveRoad;
         currentOperator = stepOp;
 
         let entryName = extractFacilityName(inst, "entry");
@@ -215,22 +250,43 @@ function extractHighwayTimeline(route, legToll) {
           kind: "node",
           type: "entry",
           badgeText: "入口",
-          name: entryName || (stepRoad ? `${stepRoad} 入口` : "有料区間入口")
+          name: entryName || (effectiveRoad ? `${effectiveRoad} 入口` : "有料区間入口")
         });
-        startNewSegment(stepRoad, stepOp);
+        startNewSegment(effectiveRoad, stepOp);
         currentSeg.distM += distM;
         currentSeg.sec += sec;
         continue;
       }
 
+      // 次ステップ先読み（高速から別の高速への乗り継ぎランプか、一般道への出口かを判別）
+      const nextInst = (i + 1 < steps.length)
+        ? (steps[i + 1]?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim()
+        : "";
+      const nextIsToll = /有料区間|有料道路/.test(nextInst) || Boolean(extractDrivingRoad(nextInst));
+
       // ② 料金体系（事業者）が変わる乗り継ぎ または 本線料金所
       const isOperatorSwitch = currentOperator && stepOp && currentOperator !== stepOp;
-      if (isOperatorSwitch || (isTollGate && !isExit)) {
-        const facilityName = extractFacilityName(inst, "switch");
-        const opTransition = isOperatorSwitch
-          ? `${OPERATOR_LABELS[currentOperator] || "高速"} ➔ ${OPERATOR_LABELS[stepOp] || "高速"}`
+      const isHighwayTransferExit = isExitManeuver && nextIsToll && !isGeneralRoad;
+
+      if (isOperatorSwitch || isHighwayTransferExit || (isTollGate && !isExitManeuver)) {
+        // 切替地点のIC名・JCT名・料金所名を現在のステップ（または直前・直後）から取得
+        let pointName = extractFacilityName(inst, "switch");
+        if (!pointName && nextInst) {
+          pointName = extractFacilityName(nextInst, "switch");
+        }
+        if (!pointName && i > 0) {
+          const prevInst = (steps[i - 1]?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim();
+          pointName = extractFacilityName(prevInst, "switch");
+        }
+
+        const nextRoad = extractDrivingRoad(nextInst) || effectiveRoad;
+        const nextOp = detectTollOperator(nextRoad) || stepOp;
+        const opChanged = currentOperator && nextOp && currentOperator !== nextOp;
+
+        const opTransition = opChanged
+          ? `${OPERATOR_LABELS[currentOperator] || "高速"} ➔ ${OPERATOR_LABELS[nextOp] || "高速"}`
           : "料金所通過";
-        const switchLabel = facilityName ? `${facilityName}（${opTransition}）` : opTransition;
+        const switchLabel = pointName ? `${pointName}（${opTransition}）` : opTransition;
 
         items.push({
           kind: "node",
@@ -238,29 +294,29 @@ function extractHighwayTimeline(route, legToll) {
           badgeText: "切替",
           name: switchLabel
         });
-        currentOperator = stepOp;
-        currentRoad = stepRoad;
-        startNewSegment(stepRoad, stepOp);
+
+        currentOperator = nextOp;
+        currentRoad = nextRoad;
+        startNewSegment(nextRoad, nextOp);
         currentSeg.distM += distM;
         currentSeg.sec += sec;
         continue;
       }
 
       // 現在の区間に距離・時間・路線名を加算
-      if (stepRoad) {
-        currentRoad = stepRoad;
-        addRoadToCurrentSeg(stepRoad);
+      if (effectiveRoad) {
+        currentRoad = effectiveRoad;
+        addRoadToCurrentSeg(effectiveRoad);
       }
       if (currentSeg) {
         currentSeg.distM += distM;
         currentSeg.sec += sec;
       }
 
-      // ③ 有料区間ステップ内で出口ICが検出された場合
-      if (isExit) {
+      // ③ 一般道への出口IC
+      if (isExitManeuver) {
         let exitName = extractFacilityName(inst, "exit");
-        if (!exitName && i + 1 < steps.length) {
-          const nextInst = (steps[i + 1]?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim();
+        if (!exitName && nextInst) {
           exitName = extractFacilityName(nextInst, "exit");
         }
 
@@ -268,7 +324,7 @@ function extractHighwayTimeline(route, legToll) {
           kind: "node",
           type: "exit",
           badgeText: "出口",
-          name: exitName || (stepRoad ? `${stepRoad} 出口` : "有料区間出口")
+          name: exitName || (effectiveRoad ? `${effectiveRoad} 出口` : "有料区間出口")
         });
         lastEndedSeg = currentSeg;
         currentSeg = null;
