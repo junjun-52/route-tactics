@@ -422,7 +422,7 @@
   .card.mix .price-big { color: var(--orange-dark); }
   .card.local .price-big { color: var(--green); }
 
-  /* 高速詳細タイムライン */
+  /* 有料区間詳細タイムライン */
   .hw-detail-wrap {
     margin-top: 12px;
     border: 1px solid var(--border);
@@ -1219,20 +1219,38 @@
   }
 
   // ===== V4: 有料区間の入口IC・出口IC・料金切替名のみ抽出 =====
+  const ROAD_NAME_RE = /([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:自動車道|高速道路|有料道路|高速[0-9０-９号線]*|名二環|伊勢湾岸|セントレアライン|知多半島道路|東海環状|東海北陸|東名|名神|新東名|新名神|中央道|北陸道|首都高|阪神高速|名古屋高速))/;
+
   function extractFacilityName(inst) {
-    // 1. 具体的なIC・JCT・料金所・出入口・ランプ名を最優先で抽出
-    const facilityRe = /([^\s\/（）()・]+?(?:スマートIC|スマートＩＣ|IC|ＩＣ|JCT|ＪＣＴ|本線料金所|料金所|出入口|入口|出口|ランプ))/g;
-    const matches = inst.match(facilityRe);
-    if (matches) {
-      for (const m of matches) {
-        if (/^(入口|出口|出入口|ランプ|料金所)$/.test(m)) continue;
-        return m;
-      }
+    // 「〇〇 方面の」という進行方向表記を除去してから判定
+    const cleaned = inst.replace(/[^\s]+\s*方面の\s*/g, "");
+
+    // 1. 明示的なIC・JCT・料金所・出入口名を最優先で抽出
+    const explicitRe = /([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:スマートIC|スマートＩＣ|IC|ＩＣ|JCT|ＪＣＴ|本線料金所|料金所|出入口))/g;
+    const explicitMatches = cleaned.match(explicitRe);
+    if (explicitMatches) {
+      return { name: explicitMatches[0], isRoad: false };
     }
-    // 2. IC名が案内文に含まれない場合は高速道路・路線名を抽出
-    const roadRe = /([^\s\/（）()]+?(?:自動車道|高速道路|有料道路|高速|名二環|伊勢湾岸|セントレアライン|知多半島道路|東海環状|東海北陸|東名|名神|新東名|新名神|中央道|北陸道|首都高|阪神高速|名古屋高速))/;
-    const roadMatch = inst.match(roadRe);
-    if (roadMatch) return roadMatch[1];
+
+    // 2. 「黒川 出口」「一宮 入口」のようにスペース有無を含む固有名＋入口/出口を抽出
+    const ioRe = /([一-龠ァ-ヶーA-Za-z0-9０-９]{2,15})\s*(入口|出口)/g;
+    let m;
+    while ((m = ioRe.exec(cleaned)) !== null) {
+      const prefix = m[1];
+      // 助詞や一般語（「のランプ」「方面」など）は除外
+      if (/(?:の|を|に|へ|方面|ランプ|車線|方向|右側|左側)$/.test(prefix)) continue;
+      // 路線名＋出口（例：「名古屋高速1号 出口」）は路線切替として扱う
+      if (ROAD_NAME_RE.test(prefix)) {
+        return { name: prefix, isRoad: true };
+      }
+      return { name: `${prefix}${m[2]}`, isRoad: false };
+    }
+
+    // 3. IC名が案内文に含まれない場合は有料道路・路線名を抽出
+    const roadMatch = cleaned.match(ROAD_NAME_RE);
+    if (roadMatch) {
+      return { name: roadMatch[1], isRoad: true };
+    }
 
     return null;
   }
@@ -1251,6 +1269,7 @@
     for (const leg of route.legs) {
       const steps = leg.steps || [];
       let inToll = false;
+      let justExited = false;
       let currentRoad = "";
 
       for (let i = 0; i < steps.length; i++) {
@@ -1261,44 +1280,61 @@
 
         if (!isTollStep) {
           inToll = false;
+          justExited = false;
           currentRoad = "";
           continue;
         }
 
-        const name = extractFacilityName(inst);
-        const isExit = maneuver.includes("OFF_RAMP") || /出口を|降りる|出る/.test(inst);
+        const extracted = extractFacilityName(inst);
+        const name = extracted ? extracted.name : null;
+        const isRoad = extracted ? extracted.isRoad : false;
+        const isExit = maneuver.includes("OFF_RAMP") || /出口を|出口へ|降りる|出る/.test(inst);
         const isTollGate = /料金所/.test(inst);
         const isJct = /(JCT|ＪＣＴ|ジャンクション)/.test(inst);
 
-        // ① 有料区間の入口（最初の有料ステップ）
+        // 出口ICを通過した直後の一般道接続ステップは無視
+        if (justExited) {
+          const isNewEntry = name && !/国道|県道|市道/.test(inst) && (/入口|に入る|合流/.test(inst) || isRoad);
+          if (!isNewEntry) continue;
+          justExited = false;
+        }
+
+        // ① 有料区間の入口
         if (!inToll) {
           inToll = true;
           pushUnique("entry", "入口IC", name || "有料区間入口");
-          if (name && !/(IC|ＩＣ|出口|入口)$/.test(name)) currentRoad = name;
+          if (isRoad && name) currentRoad = name;
           continue;
         }
 
-        // ② 出口IC（有料区間の終了・流出）
+        // ② 高速から別の有料道路への乗り継ぎ（例：名二環 ➔ 名古屋高速1号）
+        if (isExit && isRoad && name) {
+          if (currentRoad && !name.startsWith(currentRoad) && !currentRoad.startsWith(name)) {
+            pushUnique("toll", "料金切替", name);
+          }
+          currentRoad = name;
+          continue;
+        }
+
+        // ③ 一般道への出口IC
         if (isExit) {
           if (name) {
             pushUnique("exit", "出口IC", name);
           }
-          const nextInst = (steps[i + 1]?.navigationInstruction?.instructions || "");
-          if (!/有料区間|有料道路/.test(nextInst)) {
-            inToll = false;
-            currentRoad = "";
-          }
+          inToll = false;
+          justExited = true;
+          currentRoad = "";
           continue;
         }
 
-        // ③ 途中の料金所・JCT・路線切替（料金が変わるポイント）
+        // ④ 途中の料金所・JCT・路線切替（料金が変わるポイント）
         if (isTollGate && name) {
           pushUnique("toll", "料金切替", name);
         } else if (isJct && name) {
           pushUnique("jct", "JCT・切替", name);
-        } else if (name && /(高速|自動車道|有料道路|名二環|伊勢湾岸|名古屋高速|首都高|阪神高速)/.test(name)) {
-          if (currentRoad && currentRoad !== name) {
-            pushUnique("toll", "路線切替", name);
+        } else if (isRoad && name) {
+          if (currentRoad && !name.startsWith(currentRoad) && !currentRoad.startsWith(name)) {
+            pushUnique("toll", "料金切替", name);
           }
           currentRoad = name;
         }
