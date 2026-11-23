@@ -1,4 +1,4 @@
-// ===== 有料区間の入口IC・出口IC・区間別ETC料金タイムライン =====
+// ===== 有料区間の入口IC・出口IC・区間別ETC料金タイムライン (V4.1) =====
 let latestHwDetailHtml = "";
 let latestMixDetailHtml = "";
 
@@ -17,7 +17,6 @@ const OPERATOR_LABELS = {
 
 function normalizeRoadName(name) {
   if (!name) return "";
-  // 全角英数字を半角に統一
   let s = name.replace(/[０-９Ａ-Ｚａ-ｚ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
   if (s === "第二東海自動車道") return "新東名高速道路";
   if (s === "新東名") return "新東名高速道路";
@@ -104,6 +103,142 @@ function extractFacilityName(inst, role) {
   return null;
 }
 
+// ===== 座標から最寄りの実際のIC・出入口・JCT・料金所名を自動補完 =====
+function calcNodeDistMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function isValidFacilityCandidate(name, role) {
+  if (!name) return false;
+  // 路線名だけのものは除外
+  if (/^(名古屋高速|首都高速|阪神高速|東名高速|名神高速|新東名|名二環|伊勢湾岸|東海北陸)/.test(name) && !/(IC|ＩＣ|JCT|ＪＣＴ|入口|出口|出入口|料金所)/.test(name)) {
+    return false;
+  }
+  // 入口検索時に「〜出口」を除外、出口検索時に「〜入口」を除外
+  if (role === "entry" && /出口$/.test(name) && !/出入口$/.test(name)) return false;
+  if (role === "exit" && /入口$/.test(name) && !/出入口$/.test(name)) return false;
+
+  return /(スマートIC|スマートＩＣ|IC|ＩＣ|JCT|ＪＣＴ|入口|出口|出入口|料金所|ランプ)/.test(name);
+}
+
+async function lookupNearestFacilityByCoords(latLng, role) {
+  if (!latLng || typeof latLng.latitude !== "number" || typeof latLng.longitude !== "number") return null;
+
+  const queryMap = {
+    entry: "入口 IC 出入口 ランプ",
+    exit: "出口 IC 出入口 ランプ",
+    switch: "JCT ジャンクション 料金所 IC"
+  };
+  const textQuery = queryMap[role] || "IC 出入口 JCT";
+
+  // 1. Google Places API (New) で座標半径450m以内の施設を検索
+  try {
+    const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": API_KEY,
+        "X-Goog-FieldMask": "places.displayName,places.location"
+      },
+      body: JSON.stringify({
+        textQuery,
+        languageCode: "ja",
+        regionCode: "JP",
+        maxResultCount: 6,
+        locationBias: {
+          circle: {
+            center: { latitude: latLng.latitude, longitude: latLng.longitude },
+            radius: 450.0
+          }
+        }
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const places = Array.isArray(data.places) ? data.places : [];
+      let bestName = null;
+      let bestDist = Infinity;
+
+      for (const p of places) {
+        const rawName = (p.displayName?.text || "").trim();
+        const cleanName = rawName.replace(/\s+/g, "").replace(/ＩＣ/g, "IC").replace(/ＪＣＴ/g, "JCT");
+        if (!isValidFacilityCandidate(cleanName, role)) continue;
+
+        const pLoc = p.location;
+        const dist = (pLoc && typeof pLoc.latitude === "number")
+          ? calcNodeDistMeters(latLng.latitude, latLng.longitude, pLoc.latitude, pLoc.longitude)
+          : 999;
+
+        if (dist <= 600 && dist < bestDist) {
+          bestDist = dist;
+          bestName = cleanName;
+        }
+      }
+      if (bestName) return bestName;
+    }
+  } catch (e) {
+    // フォールバックへ
+  }
+
+  // 2. フォールバック：TomTom APIキーが有効な場合は TomTom Search API でも検索
+  const ttKey = (typeof getTomtomApiKey === "function") ? getTomtomApiKey() : "";
+  if (ttKey) {
+    try {
+      const url = `https://api.tomtom.com/search/2/search/${encodeURIComponent(textQuery)}.json?key=${encodeURIComponent(ttKey)}&lat=${latLng.latitude}&lon=${latLng.longitude}&radius=500&limit=6&language=ja-JP`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const results = Array.isArray(data.results) ? data.results : [];
+        for (const r of results) {
+          const poiName = (r.poi?.name || "").replace(/\s+/g, "").replace(/ＩＣ/g, "IC").replace(/ＪＣＴ/g, "JCT");
+          if (isValidFacilityCandidate(poiName, role)) {
+            return poiName;
+          }
+        }
+      }
+    } catch (e) {
+      // 無視
+    }
+  }
+
+  return null;
+}
+
+async function resolveMissingFacilityNames(items) {
+  if (!Array.isArray(items) || items.length === 0) return items;
+
+  await Promise.all(items.map(async (item) => {
+    if (item.kind !== "node" || !item.needsLookup) return;
+
+    const resolved = await lookupNearestFacilityByCoords(item.latLng, item.type);
+    if (resolved) {
+      if (item.type === "switch" && item.switchTransition) {
+        item.name = `${resolved}（${item.switchTransition}）`;
+      } else {
+        item.name = resolved;
+      }
+    } else {
+      // どうしても特定できない場合でも「名古屋高速16号 入口」のような誤解を招く表現を避ける
+      if (item.type === "entry") {
+        item.name = item.roadHint ? `${item.roadHint}（進入IC・ランプ）` : "有料区間 進入IC";
+      } else if (item.type === "exit") {
+        item.name = item.roadHint ? `${item.roadHint}（流出IC・ランプ）` : "有料区間 流出IC";
+      } else if (item.type === "switch") {
+        item.name = item.switchTransition || "路線切替・料金所";
+      }
+    }
+    delete item.needsLookup;
+  }));
+
+  return items;
+}
+
 function allocateSegmentTolls(segments, totalLegToll) {
   if (!segments || segments.length === 0) return;
   if (!totalLegToll || totalLegToll <= 0) {
@@ -185,13 +320,13 @@ function extractHighwayTimeline(route, legToll) {
       const maneuver = step?.navigationInstruction?.maneuver || "";
       const distM = step.distanceMeters || 0;
       const sec = parseInt((step.staticDuration || "0s").replace("s", ""), 10) || 0;
+      const stepLatLng = step.startLocation?.latLng || null;
 
       const hasTollTag = /有料区間|有料道路/.test(inst);
       const stepRoad = extractDrivingRoad(inst);
       const isGeneralRoad = /(国道|県道|府道|都道|市道|町道|通り|交差点)/.test(inst);
       const isExitManeuver = maneuver.includes("OFF_RAMP") || /出口を|出口へ|降りる|出る/.test(inst);
 
-      // 有料区間走行中かどうかの判定（高速本線走行中は途中で「有料区間」タグが抜けても継続）
       const isTollStep = hasTollTag || (inToll && !isGeneralRoad && !isExitManeuver);
 
       if (!isTollStep) {
@@ -205,7 +340,10 @@ function extractHighwayTimeline(route, legToll) {
             kind: "node",
             type: "exit",
             badgeText: "出口",
-            name: exitName || (currentRoad ? `${currentRoad} 出口` : "有料区間出口")
+            name: exitName || (currentRoad ? `${currentRoad}（流出IC）` : "有料区間出口"),
+            needsLookup: !exitName,
+            latLng: stepLatLng,
+            roadHint: currentRoad
           });
         }
         inToll = false;
@@ -221,7 +359,6 @@ function extractHighwayTimeline(route, legToll) {
       const stepOp = detectTollOperator(effectiveRoad) || currentOperator || "nexco";
       const isTollGate = /本線料金所|料金所/.test(inst);
 
-      // 出口ICを通過した直後のランプ・出口料金所ステップは直前区間に吸収
       if (exitingToll) {
         const isReEntry = /入口|に入る|合流/.test(inst) && !isExitManeuver && !isTollGate && !isGeneralRoad;
         if (!isReEntry) {
@@ -234,14 +371,14 @@ function extractHighwayTimeline(route, legToll) {
         exitingToll = false;
       }
 
-      // ① 有料区間の入口（現在または最大2ステップ手前の一般道案内からIC名を探索）
+      // ① 有料区間の入口
       if (!inToll) {
         inToll = true;
         currentRoad = effectiveRoad;
         currentOperator = stepOp;
 
         let entryName = extractFacilityName(inst, "entry");
-        for (let back = 1; back <= 2 && !entryName && (i - back) >= 0; back++) {
+        for (let back = 1; back <= 3 && !entryName && (i - back) >= 0; back++) {
           const prevInst = (steps[i - back]?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim();
           entryName = extractFacilityName(prevInst, "entry");
         }
@@ -250,7 +387,10 @@ function extractHighwayTimeline(route, legToll) {
           kind: "node",
           type: "entry",
           badgeText: "入口",
-          name: entryName || (effectiveRoad ? `${effectiveRoad} 入口` : "有料区間入口")
+          name: entryName || (effectiveRoad ? `${effectiveRoad}（進入IC）` : "有料区間入口"),
+          needsLookup: !entryName,
+          latLng: stepLatLng,
+          roadHint: effectiveRoad
         });
         startNewSegment(effectiveRoad, stepOp);
         currentSeg.distM += distM;
@@ -258,7 +398,7 @@ function extractHighwayTimeline(route, legToll) {
         continue;
       }
 
-      // 次ステップ先読み（高速から別の高速への乗り継ぎランプか、一般道への出口かを判別）
+      // 次ステップ先読み
       const nextInst = (i + 1 < steps.length)
         ? (steps[i + 1]?.navigationInstruction?.instructions || "").replace(/\n+/g, " ").trim()
         : "";
@@ -269,7 +409,6 @@ function extractHighwayTimeline(route, legToll) {
       const isHighwayTransferExit = isExitManeuver && nextIsToll && !isGeneralRoad;
 
       if (isOperatorSwitch || isHighwayTransferExit || (isTollGate && !isExitManeuver)) {
-        // 切替地点のIC名・JCT名・料金所名を現在のステップ（または直前・直後）から取得
         let pointName = extractFacilityName(inst, "switch");
         if (!pointName && nextInst) {
           pointName = extractFacilityName(nextInst, "switch");
@@ -292,7 +431,11 @@ function extractHighwayTimeline(route, legToll) {
           kind: "node",
           type: "switch",
           badgeText: "切替",
-          name: switchLabel
+          name: switchLabel,
+          needsLookup: !pointName,
+          latLng: stepLatLng,
+          roadHint: nextRoad,
+          switchTransition: opTransition
         });
 
         currentOperator = nextOp;
@@ -303,7 +446,6 @@ function extractHighwayTimeline(route, legToll) {
         continue;
       }
 
-      // 現在の区間に距離・時間・路線名を加算
       if (effectiveRoad) {
         currentRoad = effectiveRoad;
         addRoadToCurrentSeg(effectiveRoad);
@@ -324,7 +466,10 @@ function extractHighwayTimeline(route, legToll) {
           kind: "node",
           type: "exit",
           badgeText: "出口",
-          name: exitName || (effectiveRoad ? `${effectiveRoad} 出口` : "有料区間出口")
+          name: exitName || (effectiveRoad ? `${effectiveRoad}（流出IC）` : "有料区間出口"),
+          needsLookup: !exitName,
+          latLng: stepLatLng,
+          roadHint: effectiveRoad
         });
         lastEndedSeg = currentSeg;
         currentSeg = null;
