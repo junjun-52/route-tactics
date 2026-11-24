@@ -1,8 +1,10 @@
 /**
  * app.js
  * ROUTE TACTICS v5-yahoo 画面制御・オーケストレーション
+ * - プロファイル保存/追加/削除
+ * - 経由地（任意・最大3ヶ所）入力時のみ「ミックス」比較を実行
  * - 自宅/周辺座標バイアス付き自動ジオコーディング対応
- * - Leaflet + OpenStreetMap による本物の地図＆ルート描画対応
+ * - Leaflet + OpenStreetMap による地図＆ルート描画
  */
 (() => {
   const { STORAGE_KEYS, DEFAULT_VEHICLE_SETTINGS } = RouteTacticsConfig;
@@ -39,6 +41,9 @@
     savedPlacesList: document.getElementById('saved-places-list'),
 
     profileSelect: document.getElementById('profile-select'),
+    btnSaveProfile: document.getElementById('btn-save-profile'),
+    btnNewProfile: document.getElementById('btn-new-profile'),
+    btnDeleteProfile: document.getElementById('btn-delete-profile'),
     quickLocationChips: document.getElementById('quick-location-chips'),
 
     originName: document.getElementById('origin-name'),
@@ -50,6 +55,25 @@
     destName: document.getElementById('dest-name'),
     destLat: document.getElementById('dest-lat'),
     destLon: document.getElementById('dest-lon'),
+
+    wpInputs: [
+      {
+        name: document.getElementById('wp1-name'),
+        lat: document.getElementById('wp1-lat'),
+        lon: document.getElementById('wp1-lon'),
+      },
+      {
+        name: document.getElementById('wp2-name'),
+        lat: document.getElementById('wp2-lat'),
+        lon: document.getElementById('wp2-lon'),
+      },
+      {
+        name: document.getElementById('wp3-name'),
+        lat: document.getElementById('wp3-lat'),
+        lon: document.getElementById('wp3-lon'),
+      },
+    ],
+    btnClearWaypoints: document.getElementById('btn-clear-waypoints'),
 
     fuelEff: document.getElementById('fuel-eff'),
     fuelPrice: document.getElementById('fuel-price'),
@@ -124,7 +148,7 @@
   }
 
   /**
-   * Leaflet 地図を初期化
+   * Leaflet 地図初期化
    */
   function initMap() {
     if (!els.routeMap || typeof L === 'undefined') return;
@@ -142,7 +166,7 @@
   }
 
   /**
-   * 地図上に3戦略のポリライン・マーカー・TomTom規制ポイントを描画
+   * 地図上にルート・マーカー・規制ポイントを描画
    */
   function renderRouteMap(comparison) {
     if (!state.map || !state.mapLayerGroup) {
@@ -161,7 +185,6 @@
       highway: { color: '#2563eb', weight: 5, opacity: 0.9 },
     };
 
-    // 下道 -> ミックス -> 高速 の順に描画
     ['local', 'mix', 'highway'].forEach((strat) => {
       const route = comparison.routes.find((r) => r.strategy === strat);
       if (!route || !Array.isArray(route.path) || route.path.length < 2) return;
@@ -179,7 +202,6 @@
       poly.addTo(state.mapLayerGroup);
     });
 
-    // TomTom 交通規制・事故ポイント
     comparison.routes.forEach((route) => {
       const incList = (route.incidents && route.incidents.incidents) || [];
       incList.forEach((inc) => {
@@ -197,7 +219,6 @@
       });
     });
 
-    // 出発地・目的地マーカー
     const firstRoute = comparison.routes[0];
     if (firstRoute) {
       const oLatLng = [firstRoute.origin.lat, firstRoute.origin.lon];
@@ -370,6 +391,15 @@
       lat: parseCoordInput(els.destLat.value),
       lon: parseCoordInput(els.destLon.value),
     };
+    const waypoints = els.wpInputs
+      .map((wpEl) => ({
+        name: wpEl.name.value.trim(),
+        lat: parseCoordInput(wpEl.lat.value),
+        lon: parseCoordInput(wpEl.lon.value),
+        _el: wpEl,
+      }))
+      .filter((wp) => wp.name !== '' || isValidCoordPair(wp.lat, wp.lon));
+
     const vehicle = {
       fuelEfficiencyKmPerL: Math.max(
         0.1,
@@ -389,7 +419,7 @@
     const depRaw = els.departureTime.value;
     const departureDate = depRaw ? new Date(depRaw) : new Date();
 
-    return { origin, destination, vehicle, departureDate };
+    return { origin, destination, waypoints, vehicle, departureDate };
   }
 
   function persistLastFormState() {
@@ -434,7 +464,7 @@
     profiles.forEach((p) => {
       const opt = document.createElement('option');
       opt.value = p.id;
-      opt.textContent = p.name;
+      opt.textContent = `${p.name}（${p.fuelEfficiencyKmPerL}km/L・${p.fuelPriceYenPerL}円）`;
       if (p.id === active.id) opt.selected = true;
       els.profileSelect.appendChild(opt);
     });
@@ -640,7 +670,7 @@
           ...route.waypoints.map((wp, i) => ({
             lat: wp.lat,
             lon: wp.lon,
-            name: wp.name || `ポイント${i + 1}`,
+            name: wp.name || `経由地${i + 1}`,
           })),
           route.destination,
         ];
@@ -714,7 +744,7 @@
   }
 
   async function handleCalculate() {
-    const { origin, destination, vehicle, departureDate } = readFormInputs();
+    const { origin, destination, waypoints, vehicle, departureDate } = readFormInputs();
     const apiKeys = RouteTacticsConfig.getApiKeys();
 
     if (!apiKeys.googleMapsKey) {
@@ -755,6 +785,25 @@
         resolvedDestLabel = `${destination.name}（${geoDest.resolvedAddress}）`;
       }
 
+      // 入力された経由地があれば順次ジオコーディング
+      const resolvedWaypoints = [];
+      for (let i = 0; i < waypoints.length; i++) {
+        const wp = waypoints[i];
+        if (!isValidCoordPair(wp.lat, wp.lon)) {
+          setStatus(`経由地${i + 1}「${wp.name}」の座標を検索中...`);
+          const geoWp = await geocodePlaceName(wp.name, apiKeys);
+          wp.lat = geoWp.lat;
+          wp.lon = geoWp.lon;
+          wp._el.lat.value = wp.lat;
+          wp._el.lon.value = wp.lon;
+        }
+        resolvedWaypoints.push({
+          name: wp.name || `経由地${i + 1}`,
+          lat: wp.lat,
+          lon: wp.lon,
+        });
+      }
+
       origin.name = origin.name || '出発地';
       destination.name = destination.name || '目的地';
 
@@ -764,6 +813,7 @@
       const comparison = await RouteEngine.compareRouteStrategies({
         origin,
         destination,
+        customMixWaypoints: resolvedWaypoints,
         vehicle,
         departureTime: departureDate,
         apiKeys,
@@ -861,10 +911,53 @@
       }
     };
 
+    // プロファイル切替・保存・新規・削除
     els.profileSelect.onchange = () => {
       ProfileManager.setActiveProfile(els.profileSelect.value);
       renderProfileSelect();
       setStatus(`プロファイルを「${ProfileManager.getActiveProfile().name}」に切り替えました。`);
+    };
+
+    els.btnSaveProfile.onclick = () => {
+      const current = ProfileManager.getActiveProfile();
+      const updated = ProfileManager.upsertProfile({
+        ...current,
+        fuelEfficiencyKmPerL: Math.max(0.1, Number(els.fuelEff.value) || current.fuelEfficiencyKmPerL),
+        fuelPriceYenPerL: Math.max(0, Number(els.fuelPrice.value) || current.fuelPriceYenPerL),
+      });
+      renderProfileSelect();
+      setStatus(`「${updated.name}」の燃費・単価を保存しました。`);
+    };
+
+    els.btnNewProfile.onclick = () => {
+      const name = prompt('新しいプロファイル名を入力してください（例: ヴェルファイア・通勤）');
+      if (!name || !name.trim()) return;
+      const created = ProfileManager.upsertProfile({
+        name: name.trim(),
+        fuelEfficiencyKmPerL: Math.max(0.1, Number(els.fuelEff.value) || 12.0),
+        fuelPriceYenPerL: Math.max(0, Number(els.fuelPrice.value) || 175),
+        etcDiscountRate: 0,
+        preferredStrategy: 'highway',
+      });
+      ProfileManager.setActiveProfile(created.id);
+      renderProfileSelect();
+      setStatus(`プロファイル「${created.name}」を作成しました。`);
+    };
+
+    els.btnDeleteProfile.onclick = () => {
+      const profiles = ProfileManager.getProfiles();
+      if (profiles.length <= 1) {
+        setStatus('最後の1件のプロファイルは削除できません。', true);
+        return;
+      }
+      const current = ProfileManager.getActiveProfile();
+      if (!confirm(`プロファイル「${current.name}」を削除しますか？`)) return;
+
+      const remaining = profiles.filter((p) => p.id !== current.id);
+      ProfileManager.saveProfiles(remaining);
+      ProfileManager.setActiveProfile(remaining[0].id);
+      renderProfileSelect();
+      setStatus(`プロファイル「${current.name}」を削除しました。`);
     };
 
     [els.originName, els.originLat, els.originLon].forEach((el) => {
@@ -886,6 +979,22 @@
       els.destLat.value = '';
       els.destLon.value = '';
     });
+
+    els.wpInputs.forEach((wpEl) => {
+      wpEl.name.addEventListener('input', () => {
+        wpEl.lat.value = '';
+        wpEl.lon.value = '';
+      });
+    });
+
+    els.btnClearWaypoints.onclick = () => {
+      els.wpInputs.forEach((wpEl) => {
+        wpEl.name.value = '';
+        wpEl.lat.value = '';
+        wpEl.lon.value = '';
+      });
+      setStatus('経由地をクリアしました。');
+    };
 
     els.btnSwapLocations.onclick = () => {
       const tmpName = els.originName.value;
