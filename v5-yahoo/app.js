@@ -1,6 +1,7 @@
 /**
  * app.js
  * ROUTE TACTICS v5-yahoo 画面制御・オーケストレーション
+ * - 地点名・住所からの自動ジオコーディング（Google -> 国土地理院 -> Nominatim）対応
  */
 (() => {
   const { STORAGE_KEYS, DEFAULT_VEHICLE_SETTINGS } = RouteTacticsConfig;
@@ -90,6 +91,112 @@
   }
 
   /**
+   * 座標入力値の厳密なパース（空文字は NaN にし、0 誤認を防ぐ）
+   */
+  function parseCoordInput(val) {
+    const str = String(val ?? '').trim();
+    if (str === '') return NaN;
+    const num = Number(str);
+    return Number.isFinite(num) ? num : NaN;
+  }
+
+  function isValidCoordPair(lat, lon) {
+    return (
+      Number.isFinite(lat) &&
+      Number.isFinite(lon) &&
+      lat >= -90 &&
+      lat <= 90 &&
+      lon >= -180 &&
+      lon <= 180 &&
+      !(lat === 0 && lon === 0)
+    );
+  }
+
+  /**
+   * 地点名・住所から緯度経度を自動取得（Google Geocoding -> 国土地理院 -> OpenStreetMap Nominatim）
+   */
+  async function geocodePlaceName(query, googleMapsKey = '') {
+    const q = String(query || '').trim();
+    if (!q) {
+      throw new Error('地点名または住所を入力してください。');
+    }
+
+    // 1. Google Geocoding API（有効な場合）
+    if (googleMapsKey) {
+      try {
+        const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
+          q
+        )}&language=ja&region=jp&key=${encodeURIComponent(googleMapsKey)}`;
+        const res = await fetch(gUrl);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'OK' && Array.isArray(data.results) && data.results[0]) {
+            const loc = data.results[0].geometry.location;
+            return {
+              lat: Number(loc.lat.toFixed(6)),
+              lon: Number(loc.lng.toFixed(6)),
+              source: 'Google',
+            };
+          }
+        }
+      } catch (e) {
+        console.warn('[Geocode] Google Geocoding スキップ:', e.message);
+      }
+    }
+
+    // 2. 国土地理院 住所検索API（無料・キー不要・日本の地名に強い）
+    try {
+      const gsiUrl = `https://msearch.gsi.go.jp/address-search/AddressSearch?q=${encodeURIComponent(
+        q
+      )}`;
+      const res = await fetch(gsiUrl);
+      if (res.ok) {
+        const list = await res.json();
+        if (Array.isArray(list) && list.length > 0 && list[0].geometry && list[0].geometry.coordinates) {
+          const [lon, lat] = list[0].geometry.coordinates;
+          if (isValidCoordPair(Number(lat), Number(lon))) {
+            return {
+              lat: Number(Number(lat).toFixed(6)),
+              lon: Number(Number(lon).toFixed(6)),
+              source: '国土地理院',
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Geocode] 国土地理院API スキップ:', e.message);
+    }
+
+    // 3. OpenStreetMap Nominatim（無料・キー不要・施設名や駅名にも対応）
+    try {
+      const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=jp&q=${encodeURIComponent(
+        q
+      )}`;
+      const res = await fetch(nomUrl, {
+        headers: { 'Accept-Language': 'ja' },
+      });
+      if (res.ok) {
+        const list = await res.json();
+        if (Array.isArray(list) && list.length > 0) {
+          const lat = Number(list[0].lat);
+          const lon = Number(list[0].lon);
+          if (isValidCoordPair(lat, lon)) {
+            return {
+              lat: Number(lat.toFixed(6)),
+              lon: Number(lon.toFixed(6)),
+              source: 'OpenStreetMap',
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Geocode] Nominatim スキップ:', e.message);
+    }
+
+    throw new Error(`「${q}」の緯度経度を取得できませんでした。住所を詳しく書くか緯度経度を直接入力してください。`);
+  }
+
+  /**
    * 画面の出発地・目的地入力へ座標セット
    */
   function applyLocationToField(target, loc) {
@@ -111,14 +218,14 @@
    */
   function readFormInputs() {
     const origin = {
-      name: els.originName.value.trim() || '出発地',
-      lat: Number(els.originLat.value),
-      lon: Number(els.originLon.value),
+      name: els.originName.value.trim(),
+      lat: parseCoordInput(els.originLat.value),
+      lon: parseCoordInput(els.originLon.value),
     };
     const destination = {
-      name: els.destName.value.trim() || '目的地',
-      lat: Number(els.destLat.value),
-      lon: Number(els.destLon.value),
+      name: els.destName.value.trim(),
+      lat: parseCoordInput(els.destLat.value),
+      lon: parseCoordInput(els.destLon.value),
     };
     const vehicle = {
       fuelEfficiencyKmPerL: Math.max(
@@ -603,33 +710,53 @@
   }
 
   /**
-   * 試算実行メインハンドラ
+   * 試算実行メインハンドラ（緯度経度が空欄なら地点名から自動取得）
    */
   async function handleCalculate() {
     const { origin, destination, vehicle, departureDate } = readFormInputs();
-
-    if (
-      !Number.isFinite(origin.lat) ||
-      !Number.isFinite(origin.lon) ||
-      !Number.isFinite(destination.lat) ||
-      !Number.isFinite(destination.lon)
-    ) {
-      setStatus('出発地と目的地の緯度経度を正しく入力してください。', true);
-      return;
-    }
-
     const apiKeys = RouteTacticsConfig.getApiKeys();
+
     if (!apiKeys.googleMapsKey) {
       setStatus('先に「⚙️ API・地点設定」から Google Maps APIキーを保存してください。', true);
       els.settingsPanel.classList.remove('is-hidden');
       return;
     }
 
-    persistLastFormState();
     els.btnCalculate.disabled = true;
-    setStatus('Google Routes API / TomTom API / Open-Meteo で試算中...');
 
     try {
+      // 出発地の座標が未入力なら地点名から自動ジオコーディング
+      if (!isValidCoordPair(origin.lat, origin.lon)) {
+        if (!origin.name) {
+          throw new Error('出発地の「地点名」または「緯度・経度」を入力してください。');
+        }
+        setStatus(`出発地「${origin.name}」の座標を検索中...`);
+        const geoOrigin = await geocodePlaceName(origin.name, apiKeys.googleMapsKey);
+        origin.lat = geoOrigin.lat;
+        origin.lon = geoOrigin.lon;
+        els.originLat.value = origin.lat;
+        els.originLon.value = origin.lon;
+      }
+
+      // 目的地の座標が未入力なら地点名から自動ジオコーディング
+      if (!isValidCoordPair(destination.lat, destination.lon)) {
+        if (!destination.name) {
+          throw new Error('目的地の「地点名」または「緯度・経度」を入力してください。');
+        }
+        setStatus(`目的地「${destination.name}」の座標を検索中...`);
+        const geoDest = await geocodePlaceName(destination.name, apiKeys.googleMapsKey);
+        destination.lat = geoDest.lat;
+        destination.lon = geoDest.lon;
+        els.destLat.value = destination.lat;
+        els.destLon.value = destination.lon;
+      }
+
+      origin.name = origin.name || '出発地';
+      destination.name = destination.name || '目的地';
+
+      persistLastFormState();
+      setStatus('Google Routes API / TomTom API / Open-Meteo で試算中...');
+
       const comparison = await RouteEngine.compareRouteStrategies({
         origin,
         destination,
@@ -693,13 +820,20 @@
       setStatus('APIキーをブラウザに保存しました。');
     };
 
-    els.btnSaveHome.onclick = () => {
+    els.btnSaveHome.onclick = async () => {
       try {
-        ProfileManager.setHomeLocation({
-          name: els.homeName.value || '自宅',
-          lat: els.homeLat.value,
-          lon: els.homeLon.value,
-        });
+        const name = els.homeName.value.trim() || '自宅';
+        let lat = parseCoordInput(els.homeLat.value);
+        let lon = parseCoordInput(els.homeLon.value);
+
+        if (!isValidCoordPair(lat, lon)) {
+          setStatus(`「${name}」の座標を検索中...`);
+          const geo = await geocodePlaceName(name, RouteTacticsConfig.getApiKeys().googleMapsKey);
+          lat = geo.lat;
+          lon = geo.lon;
+        }
+
+        ProfileManager.setHomeLocation({ name, lat, lon });
         renderLocationsUI();
         setStatus('自宅地点を保存しました。');
       } catch (err) {
@@ -707,13 +841,21 @@
       }
     };
 
-    els.btnAddPlace.onclick = () => {
+    els.btnAddPlace.onclick = async () => {
       try {
-        ProfileManager.upsertSavedPlace({
-          name: els.placeName.value,
-          lat: els.placeLat.value,
-          lon: els.placeLon.value,
-        });
+        const name = els.placeName.value.trim();
+        let lat = parseCoordInput(els.placeLat.value);
+        let lon = parseCoordInput(els.placeLon.value);
+
+        if (!isValidCoordPair(lat, lon)) {
+          if (!name) throw new Error('登録地名を入力してください。');
+          setStatus(`「${name}」の座標を検索中...`);
+          const geo = await geocodePlaceName(name, RouteTacticsConfig.getApiKeys().googleMapsKey);
+          lat = geo.lat;
+          lon = geo.lon;
+        }
+
+        ProfileManager.upsertSavedPlace({ name, lat, lon });
         els.placeName.value = '';
         els.placeLat.value = '';
         els.placeLon.value = '';
@@ -740,6 +882,16 @@
       el.addEventListener('focus', () => {
         state.activeTargetField = 'dest';
       });
+    });
+
+    // 地点名を書き換えたら、古い緯度経度をクリアして再検索されるようにする
+    els.originName.addEventListener('input', () => {
+      els.originLat.value = '';
+      els.originLon.value = '';
+    });
+    els.destName.addEventListener('input', () => {
+      els.destLat.value = '';
+      els.destLon.value = '';
     });
 
     els.btnSwapLocations.onclick = () => {
