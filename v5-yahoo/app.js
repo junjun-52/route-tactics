@@ -1,13 +1,16 @@
 /**
  * app.js
  * ROUTE TACTICS v5-yahoo 画面制御・オーケストレーション
- * - 地点名・住所からの自動ジオコーディング（TomTom Search -> Google -> Nominatim -> 国土地理院）対応
+ * - 自宅/周辺座標バイアス付き自動ジオコーディング対応
  */
 (() => {
   const { STORAGE_KEYS, DEFAULT_VEHICLE_SETTINGS } = RouteTacticsConfig;
 
+  // 自宅未登録時のデフォルト検索バイアス（愛知県稲沢・名古屋周辺）
+  const DEFAULT_SEARCH_BIAS = { lat: 35.247, lon: 136.787 };
+
   const state = {
-    activeTargetField: 'dest', // 'origin' | 'dest' （クイック地点チップ押下時の反映先）
+    activeTargetField: 'dest', // 'origin' | 'dest'
     lastComparison: null,
     lastWeathers: {},
   };
@@ -90,9 +93,6 @@
     )}T${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}`;
   }
 
-  /**
-   * 座標入力値の厳密なパース（空文字は NaN にし、0 誤認を防ぐ）
-   */
   function parseCoordInput(val) {
     const str = String(val ?? '').trim();
     if (str === '') return NaN;
@@ -113,8 +113,19 @@
   }
 
   /**
-   * 地点名・住所から緯度経度を自動取得
-   * 優先順位：TomTom Search API -> Google Geocoding API -> OpenStreetMap Nominatim -> 国土地理院
+   * 検索バイアス基準座標（自宅が設定済みなら自宅、未設定なら稲沢・名古屋周辺）
+   */
+  function getSearchBiasCoord() {
+    const home = ProfileManager.getHomeLocation();
+    if (home && isValidCoordPair(home.lat, home.lon)) {
+      return { lat: home.lat, lon: home.lon };
+    }
+    return DEFAULT_SEARCH_BIAS;
+  }
+
+  /**
+   * 地点名・住所から緯度経度を自動取得（周辺バイアス付き）
+   * 優先順位：TomTom Search API -> Google Geocoding API -> OpenStreetMap Nominatim
    */
   async function geocodePlaceName(query, apiKeys = {}) {
     const q = String(query || '').trim();
@@ -123,18 +134,27 @@
     }
 
     const { googleMapsKey = '', tomtomKey = '' } = apiKeys;
+    const bias = getSearchBiasCoord();
 
-    // 1. TomTom Search API（日本の駅名・施設名・住所に非常に強い）
+    // 1. TomTom Search API（周辺座標バイアス lat/lon を指定して同名他県を回避）
     if (tomtomKey) {
       try {
-        const ttUrl = `https://api.tomtom.com/search/2/search/${encodeURIComponent(
-          q
-        )}.json?key=${encodeURIComponent(tomtomKey)}&countrySet=JP&language=ja-JP&limit=1`;
+        const ttUrl =
+          `https://api.tomtom.com/search/2/search/${encodeURIComponent(q)}.json` +
+          `?key=${encodeURIComponent(tomtomKey)}` +
+          `&countrySet=JP&language=ja-JP&limit=5` +
+          `&lat=${bias.lat}&lon=${bias.lon}`;
         const res = await fetch(ttUrl);
         if (res.ok) {
           const data = await res.json();
-          const hit = data && Array.isArray(data.results) && data.results[0];
-          if (hit && hit.position && isValidCoordPair(hit.position.lat, hit.position.lon)) {
+          const results = data && Array.isArray(data.results) ? data.results : [];
+          // バイアス座標に最も近い有効候補を選択
+          const valid = results.filter(
+            (r) => r.position && isValidCoordPair(r.position.lat, r.position.lon)
+          );
+          if (valid.length > 0) {
+            valid.sort((a, b) => (a.dist ?? Infinity) - (b.dist ?? Infinity));
+            const hit = valid[0];
             return {
               lat: Number(Number(hit.position.lat).toFixed(6)),
               lon: Number(Number(hit.position.lon).toFixed(6)),
@@ -151,12 +171,16 @@
       }
     }
 
-    // 2. Google Geocoding API（有効な場合）
+    // 2. Google Geocoding API（周辺 bounds バイアス付き）
     if (googleMapsKey) {
       try {
-        const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
-          q
-        )}&language=ja&region=jp&key=${encodeURIComponent(googleMapsKey)}`;
+        const bounds = `${(bias.lat - 0.5).toFixed(3)},${(bias.lon - 0.5).toFixed(3)}|${(
+          bias.lat + 0.5
+        ).toFixed(3)},${(bias.lon + 0.5).toFixed(3)}`;
+        const gUrl =
+          `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}` +
+          `&language=ja&region=jp&bounds=${encodeURIComponent(bounds)}` +
+          `&key=${encodeURIComponent(googleMapsKey)}`;
         const res = await fetch(gUrl);
         if (res.ok) {
           const data = await res.json();
@@ -175,17 +199,26 @@
       }
     }
 
-    // 3. OpenStreetMap Nominatim（無料・キー不要・駅名や施設名にも対応）
+    // 3. OpenStreetMap Nominatim（周辺 viewbox バイアス付き）
     try {
-      const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=jp&q=${encodeURIComponent(
-        q
-      )}`;
+      const viewbox = `${(bias.lon - 0.8).toFixed(3)},${(bias.lat + 0.8).toFixed(3)},${(
+        bias.lon + 0.8
+      ).toFixed(3)},${(bias.lat - 0.8).toFixed(3)}`;
+      const nomUrl =
+        `https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=jp` +
+        `&viewbox=${encodeURIComponent(viewbox)}&q=${encodeURIComponent(q)}`;
       const res = await fetch(nomUrl, {
         headers: { 'Accept-Language': 'ja' },
       });
       if (res.ok) {
         const list = await res.json();
         if (Array.isArray(list) && list.length > 0) {
+          // バイアス座標に最も近い候補を優先
+          list.sort((a, b) => {
+            const da = Math.hypot(Number(a.lat) - bias.lat, Number(a.lon) - bias.lon);
+            const db = Math.hypot(Number(b.lat) - bias.lat, Number(b.lon) - bias.lon);
+            return da - db;
+          });
           const lat = Number(list[0].lat);
           const lon = Number(list[0].lon);
           if (isValidCoordPair(lat, lon)) {
@@ -202,36 +235,9 @@
       console.warn('[Geocode] Nominatim スキップ:', e.message);
     }
 
-    // 4. 国土地理院 住所検索API（最終フォールバック：住所向け）
-    try {
-      const gsiUrl = `https://msearch.gsi.go.jp/address-search/AddressSearch?q=${encodeURIComponent(
-        q
-      )}`;
-      const res = await fetch(gsiUrl);
-      if (res.ok) {
-        const list = await res.json();
-        if (Array.isArray(list) && list.length > 0 && list[0].geometry && list[0].geometry.coordinates) {
-          const [lon, lat] = list[0].geometry.coordinates;
-          if (isValidCoordPair(Number(lat), Number(lon))) {
-            return {
-              lat: Number(Number(lat).toFixed(6)),
-              lon: Number(Number(lon).toFixed(6)),
-              resolvedAddress: (list[0].properties && list[0].properties.title) || q,
-              source: '国土地理院',
-            };
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('[Geocode] 国土地理院API スキップ:', e.message);
-    }
-
     throw new Error(`「${q}」の座標を取得できませんでした。都道府県名などを付けて再試行してください。`);
   }
 
-  /**
-   * 画面の出発地・目的地入力へ座標セット
-   */
   function applyLocationToField(target, loc) {
     if (!loc) return;
     if (target === 'origin') {
@@ -246,9 +252,6 @@
     persistLastFormState();
   }
 
-  /**
-   * 現在の入力フォーム状態から出発地・目的地・車両設定を取得
-   */
   function readFormInputs() {
     const origin = {
       name: els.originName.value.trim(),
@@ -316,9 +319,6 @@
     } catch (_) {}
   }
 
-  /**
-   * プロファイルセレクタ描画＆適用
-   */
   function renderProfileSelect() {
     const profiles = ProfileManager.getProfiles();
     const active = ProfileManager.getActiveProfile();
@@ -336,9 +336,6 @@
     els.fuelPrice.value = active.fuelPriceYenPerL;
   }
 
-  /**
-   * 自宅＆登録地5件の描画（クイックチップ＋管理リスト）
-   */
   function renderLocationsUI() {
     const home = ProfileManager.getHomeLocation();
     const savedPlaces = ProfileManager.getSavedPlaces();
@@ -388,7 +385,6 @@
       els.savedPlacesList.appendChild(li);
     });
 
-    // クイックチップ（自宅 + 登録地最大5件）
     const { all } = ProfileManager.getAllQuickLocations();
     els.quickLocationChips.innerHTML = '';
 
@@ -408,9 +404,6 @@
     });
   }
 
-  /**
-   * Yahoo!カーナビ起動フォールバックトースト表示
-   */
   function showFallbackToast({ yahooUrl, googleMapsUrl, isLikelyDesktop }) {
     els.schemeToastTitle.textContent = isLikelyDesktop
       ? 'PCブラウザからはアプリを直接開けません。URLをコピーするかスマホ実機・Googleマップをご利用ください。'
@@ -420,9 +413,6 @@
     els.schemeToast.classList.remove('is-hidden');
   }
 
-  /**
-   * ルート比較カードの描画
-   */
   function renderRouteCards(comparison, weathersByStrategy) {
     els.routesContainer.innerHTML = '';
     if (!comparison || !Array.isArray(comparison.routes)) return;
@@ -432,7 +422,6 @@
       card.className = 'route-card';
       card.dataset.strategy = route.strategy;
 
-      // ヘッダー
       const header = document.createElement('div');
       header.className = 'route-card-header';
       header.innerHTML = `
@@ -440,7 +429,6 @@
         <div class="route-total-cost">${formatYen(route.cost.totalCostYen)}</div>
       `;
 
-      // 主要メトリクス
       const crossCheckText =
         typeof route.tomtomDurationSeconds === 'number'
           ? `Google ${formatDuration(route.googleDurationSeconds)} / TomTom ${formatDuration(
@@ -469,12 +457,10 @@
         </div>
       `;
 
-      // 時間コスパバッジ
       const cospa = document.createElement('div');
       cospa.className = 'cospa-pill';
       cospa.textContent = `⏱️ ${route.timeCospa ? route.timeCospa.summary : ''}（${crossCheckText}）`;
 
-      // 到着予定時刻の天気
       const w = weathersByStrategy[route.strategy];
       const weatherEl = document.createElement('div');
       weatherEl.className = 'weather-box';
@@ -488,7 +474,6 @@
 
       card.append(header, metrics, cospa, weatherEl);
 
-      // TomTom 交通規制情報（存在する場合）
       if (route.incidents && route.incidents.count > 0) {
         const incEl = document.createElement('div');
         incEl.className = 'incidents-box';
@@ -500,11 +485,9 @@
         card.appendChild(incEl);
       }
 
-      // ナビ起動アクション（Yahoo!カーナビ yjcarnavi:// ＋ Googleマップ併用）
       const naviBox = document.createElement('div');
       naviBox.className = 'navi-actions';
 
-      // ミックスルートは経由地（最大3ヶ所）を付与、全高速・全下道は目的地指定
       const yahooWaypoints = route.strategy === 'mix' ? route.waypoints || [] : [];
       const yahooUrl = NaviLauncher.buildYahooNaviUrl({
         destination: route.destination,
@@ -534,7 +517,6 @@
       };
       naviBox.appendChild(btnYahoo);
 
-      // ミックスルートの場合：一般道区間を確実に「一般優先」で切り替えるための区間別起動ボタン
       if (route.strategy === 'mix' && Array.isArray(route.waypoints) && route.waypoints.length > 0) {
         const segBox = document.createElement('div');
         segBox.className = 'segment-box';
@@ -576,7 +558,6 @@
         naviBox.appendChild(segBox);
       }
 
-      // Googleマップ併用＆スキームURLコピー行
       const subRow = document.createElement('div');
       subRow.className = 'sub-navi-row';
 
@@ -604,9 +585,6 @@
     });
   }
 
-  /**
-   * サマリーバナー更新
-   */
   function renderSummaryBanner(comparison) {
     if (!comparison || !Array.isArray(comparison.routes) || comparison.routes.length === 0) {
       els.summaryBanner.classList.add('is-hidden');
@@ -628,9 +606,6 @@
     els.summaryBanner.classList.remove('is-hidden');
   }
 
-  /**
-   * Canvas 上へ3戦略のポリラインとTomTom規制ポイントを描画
-   */
   function renderRouteCanvas(comparison) {
     const canvas = els.routeCanvas;
     const ctx = canvas.getContext('2d');
@@ -685,7 +660,6 @@
       highway: { stroke: '#2563eb', width: 4 },
     };
 
-    // 下道 -> ミックス -> 高速 の順に重ねて視認性を確保
     ['local', 'mix', 'highway'].forEach((strat) => {
       const route = comparison.routes.find((r) => r.strategy === strat);
       if (!route || !Array.isArray(route.path) || route.path.length < 2) return;
@@ -704,7 +678,6 @@
       ctx.stroke();
     });
 
-    // TomTom 交通規制・事故ポイント描画
     comparison.routes.forEach((route) => {
       const incList = (route.incidents && route.incidents.incidents) || [];
       incList.forEach((inc) => {
@@ -721,7 +694,6 @@
       });
     });
 
-    // 出発地・目的地マーカー
     const firstRoute = comparison.routes[0];
     if (firstRoute) {
       const oXY = toXY(firstRoute.origin.lat, firstRoute.origin.lon);
@@ -742,9 +714,6 @@
       '黒丸：出発地 / 赤丸：目的地 / 赤点：TomTom交通規制・事故情報ポイント';
   }
 
-  /**
-   * 試算実行メインハンドラ（緯度経度が空欄なら地点名から自動取得）
-   */
   async function handleCalculate() {
     const { origin, destination, vehicle, departureDate } = readFormInputs();
     const apiKeys = RouteTacticsConfig.getApiKeys();
@@ -761,7 +730,6 @@
       let resolvedOriginLabel = origin.name;
       let resolvedDestLabel = destination.name;
 
-      // 出発地の座標が未入力なら地点名から自動ジオコーディング
       if (!isValidCoordPair(origin.lat, origin.lon)) {
         if (!origin.name) {
           throw new Error('出発地の地点名・住所を入力してください。');
@@ -775,7 +743,6 @@
         resolvedOriginLabel = `${origin.name}（${geoOrigin.resolvedAddress}）`;
       }
 
-      // 目的地の座標が未入力なら地点名から自動ジオコーディング
       if (!isValidCoordPair(destination.lat, destination.lon)) {
         if (!destination.name) {
           throw new Error('目的地の地点名・住所を入力してください。');
@@ -803,7 +770,6 @@
         apiKeys,
       });
 
-      // 各戦略の到着予定時刻における目的地天気を取得
       const weathersByStrategy = {};
       await Promise.all(
         comparison.routes.map(async (route) => {
@@ -828,9 +794,7 @@
       renderRouteCards(comparison, weathersByStrategy);
       renderRouteCanvas(comparison);
 
-      setStatus(
-        `試算完了：${resolvedOriginLabel} → ${resolvedDestLabel}`
-      );
+      setStatus(`試算完了：${resolvedOriginLabel} → ${resolvedDestLabel}`);
     } catch (err) {
       console.error('[App] 試算エラー:', err);
       setStatus(`試算エラー: ${err.message}`, true);
@@ -839,9 +803,6 @@
     }
   }
 
-  /**
-   * イベントリスナー登録
-   */
   function bindEvents() {
     els.btnToggleSettings.onclick = () => {
       els.settingsPanel.classList.toggle('is-hidden');
@@ -907,7 +868,6 @@
       setStatus(`プロファイルを「${ProfileManager.getActiveProfile().name}」に切り替えました。`);
     };
 
-    // フォーカスした側（出発地/目的地）をクイックチップの反映先に記憶
     [els.originName, els.originLat, els.originLon].forEach((el) => {
       el.addEventListener('focus', () => {
         state.activeTargetField = 'origin';
@@ -919,7 +879,6 @@
       });
     });
 
-    // 地点名を書き換えたら、古い緯度経度をクリアして再検索されるようにする
     els.originName.addEventListener('input', () => {
       els.originLat.value = '';
       els.originLon.value = '';
@@ -985,9 +944,6 @@
     });
   }
 
-  /**
-   * 初期化
-   */
   function init() {
     const keys = RouteTacticsConfig.getApiKeys();
     els.inputGoogleKey.value = keys.googleMapsKey;
