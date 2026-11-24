@@ -1,10 +1,8 @@
 // ===== 路線別ランプ照合対応 有料区間タイムライン＋全国有料道路網羅＋ICワンタップコピー (v5-yahoo) =====
 let latestHwDetailHtml = "", latestMixDetailHtml = "";
 
-// 全国の高速道路・都市高速・一般有料道路パターン
 const ROAD_CORE_PATTERN = [
   "[一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:自動車道|高速道路|有料道路|連絡道路|横断道路|縦貫道路|都市高速|高速[0-9０-９号線]*)",
-  // 都市高速・大動脈・略称高速（全国）
   "名二環|伊勢湾岸|東海環状|東海北陸|東名|新東名|名神|新名神|中央道|長野道|中部横断道",
   "道央道|札樽道|道東道|後志道|深川留萌道|日高道|旭川紋別道",
   "東北道|八戸道|秋田道|山形道|釜石道|磐越道|日本海東北道|東北中央道|三陸道|仙台東部道路|仙台北部道路|仙台南部道路",
@@ -14,7 +12,6 @@ const ROAD_CORE_PATTERN = [
   "徳島道|松山道|高松道|高知道|今治小松道|しまなみ海道|瀬戸中央道|神戸淡路鳴門道",
   "九州道|東九州道|長崎道|大分道|宮崎道|西九州道|南九州道|沖縄道",
   "首都高|阪神高速|名古屋高速|福岡高速|北九州高速|広島高速",
-  // 全国の主な一般有料道路・バイパス・トンネル・大橋（〜道路・〜ライン等）
   "東京湾アクアライン|アクアライン|第三京浜道路|第三京浜|横浜新道|横浜横須賀道路|横横道|京葉道路|千葉東金道路|富津館山道路",
   "小田原厚木道路|西湘バイパス|箱根新道|東富士五湖道路|伊豆スカイライン|箱根ターンパイク|富士山スカイライン|安房峠道路",
   "知多半島道路|知多横断道路|南知多道路|セントレアライン|猿投グリーンロード|衣浦豊田道路|名古屋瀬戸道路|衣浦トンネル|伊勢志摩スカイライン",
@@ -23,7 +20,6 @@ const ROAD_CORE_PATTERN = [
 ].join("|");
 
 const ROAD_RE = new RegExp(`(${ROAD_CORE_PATTERN})`, "g");
-// 有料区間ステップ内でのみ使うフォールバック（一般道の「〇〇トンネル」「〇〇バイパス」誤爆を防止）
 const TOLL_ONLY_ROAD_RE = new RegExp(`(${ROAD_CORE_PATTERN}|[一-龠ァ-ヶーA-Za-z0-9０-９]{2,14}?(?:バイパス|スカイライン|グリーンロード|トンネル|大橋|道路))`, "g");
 
 const OP_LABELS = {
@@ -90,7 +86,6 @@ const _facCache = new Map();
   document.head.appendChild(style);
 })();
 
-// 略称や表記ゆれを正式名称へ統一（同一路線の分断を防止）
 function normRoad(s) {
   if (!s) return "";
   s = s.replace(/[０-９Ａ-Ｚａ-ｚ]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/\s+/g, "");
@@ -114,7 +109,6 @@ function normRoad(s) {
   if (/外環/.test(s)) return "東京外環自動車道";
   if (/圏央/.test(s)) return "首都圏中央連絡自動車道（圏央道）";
 
-  // 「〇〇道」略称を「〇〇自動車道」へ統一
   const shortToFullMap = {
     "道央道": "道央自動車道",
     "札樽道": "札樽自動車道",
@@ -178,7 +172,6 @@ function normRoad(s) {
   return s;
 }
 
-// 全国の運営会社・道路公社区分判定
 function getOp(r) {
   if (!r) return "nexco";
   if (/名古屋高速/.test(r)) return "urban_nagoya";
@@ -189,26 +182,18 @@ function getOp(r) {
   if (/神戸淡路|瀬戸中央|西瀬戸|しまなみ/.test(r)) return "honshi";
   if (/アクアライン/.test(r)) return "aqualine";
 
-  // 愛知県道路公社・周辺有料
   if (/知多半島|セントレア|知多横断|南知多|中部国際空港連絡|猿投グリーンロード|衣浦豊田|名古屋瀬戸|衣浦トンネル/.test(r)) {
     return "public_aichi";
   }
-
-  // 関東有料・地方公社（第三京浜・京葉道路はNEXCO管理だが料金体系が別のため分離）
   if (/第三京浜|横浜新道|横浜横須賀|京葉道路|千葉東金|富津館山|小田原厚木|西湘バイパス|箱根新道|東富士五湖|伊豆スカイライン|箱根ターンパイク|富士山スカイライン/.test(r)) {
     return "public_kanto";
   }
-
-  // 関西有料・地方公社
   if (/第二神明|京滋バイパス|京都縦貫|山陰近畿|琵琶湖大橋|湯浅御坊|奈良奥山|信貴生駒/.test(r)) {
     return "public_kansai";
   }
-
-  // その他地方道路公社・観光有料道路
   if (/伊勢志摩スカイライン|安房峠|指宿スカイライン|有料道路|バイパス|スカイライン|グリーンロード|トンネル|大橋/.test(r)) {
     return "public_local";
   }
-
   return "nexco";
 }
 
@@ -262,34 +247,49 @@ function cleanFacName(raw, role, allowBare = false) {
   if (allowBare && !new RegExp(ROAD_RE.source).test(n)) return role === "entry" ? `${n}入口` : role === "exit" ? `${n}出口` : `${n}JCT`;
   return null;
 }
+
 function parseStepFac(inst, role) {
   if (!inst) return null;
-  const m1 = inst.match(/([一-龠ァ-ヶーA-Za-z0-9０-９]{2,15}?(?:スマートIC|スマートＩＣ|IC|ＩＣ|JCT|ＪＣＴ|本線料金所|料金所|出入口))/g);
-  if (m1) for (const x of m1) { if (!/^(料金所|出入口)$/.test(x) && (role === "switch" || !/(JCT|ＪＣＴ)$/.test(x))) return x.replace(/ＩＣ/g, "IC").replace(/ＪＣＴ/g, "JCT"); }
-  const m2 = inst.match(/([一-龠ァ-ヶーA-Za-z0-9０-９]{2,15})\s*(入口|出口)/);
-  if (m2 && !/(?:の|を|に|へ|から|まで|方面|ランプ|車線|方向|右側|左側|有料)$/.test(m2[1]) && !new RegExp(ROAD_RE.source).test(m2[1])) return `${m2[1]}${m2[2]}`;
-  const m3 = inst.match(/[（(]([^（）()\/]+?)\s*の表示[）)]/);
+  // 路線名プレフィックス（例: 「東名高速道路 春日井IC」）がくっついている場合も分離して抽出
+  const cleaned = String(inst)
+    .replace(/ＩＣ/g, "IC")
+    .replace(/ＪＣＴ/g, "JCT")
+    .replace(new RegExp(`(?:${ROAD_CORE_PATTERN})\\s*`, "g"), " ");
+
+  const m1 = cleaned.match(/([一-龠ァ-ヶーA-Za-z0-9]{2,14}?(?:スマートIC|IC|JCT|本線料金所|料金所|出入口))/g);
+  if (m1) {
+    for (const x of m1) {
+      if (!/^(料金所|出入口|IC|JCT)$/.test(x) && (role === "switch" || !/JCT$/.test(x))) {
+        return x;
+      }
+    }
+  }
+  const m2 = cleaned.match(/([一-龠ァ-ヶーA-Za-z0-9]{2,14})\s*(入口|出口)/);
+  if (m2 && !/(?:の|を|に|へ|から|まで|方面|ランプ|車線|方向|右側|左側|有料)$/.test(m2[1]) && !new RegExp(ROAD_RE.source).test(m2[1])) {
+    return `${m2[1]}${m2[2]}`;
+  }
+  const m3 = cleaned.match(/[（(]([^（）()\/]+?)\s*(?:の表示|出口|方面)[）)]/);
   if (m3 && !new RegExp(ROAD_RE.source).test(m3[1]) && !/^(国道|県道|都道|府道|市道|市街|方面|一般道|有料)/.test(m3[1]) && m3[1].length >= 2 && m3[1].length <= 12) {
     return role === "entry" ? `${m3[1].trim()}入口` : role === "exit" ? `${m3[1].trim()}出口` : m3[1].trim();
   }
   return null;
 }
-async function fetchWithTimeout(url, opts = {}, ms = 1000) {
+
+async function fetchWithTimeout(url, opts = {}, ms = 1200) {
   const ctrl = new AbortController(), id = setTimeout(() => ctrl.abort(), ms);
   try { return await fetch(url, { ...opts, signal: ctrl.signal }); } finally { clearTimeout(id); }
 }
 
-// Overpass API 高速タイムアウト（900ms）で沿線ランプを照合
 async function searchRoadJunctions(pt, role, roadName) {
-  if (!pt || !roadName) return null;
-  const rKey = roadName.replace(/(高速道路|自動車道|有料道路|バイパス|道路|線)$/, "");
-  const q = `[out:json][timeout:2];(node["highway"="motorway_junction"](around:2200,${pt.lat},${pt.lng});way["highway"="motorway_link"](around:1800,${pt.lat},${pt.lng});node["barrier"="toll_booth"](around:1800,${pt.lat},${pt.lng}););out center;`;
+  if (!pt) return null;
+  const rKey = roadName ? roadName.replace(/(高速道路|自動車道|有料道路|バイパス|道路|線)$/, "") : "";
+  const q = `[out:json][timeout:2];(node["highway"="motorway_junction"](around:2500,${pt.lat},${pt.lng});way["highway"="motorway_link"](around:2000,${pt.lat},${pt.lng});node["barrier"="toll_booth"](around:2000,${pt.lat},${pt.lng}););out center;`;
   try {
     const res = await fetchWithTimeout("https://overpass-api.de/api/interpreter", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
       body: "data=" + encodeURIComponent(q)
-    }, 900);
+    }, 1100);
     if (!res.ok) return null;
     const data = await res.json();
     let best = null;
@@ -303,7 +303,7 @@ async function searchRoadJunctions(pt, role, roadName) {
       const valid = cleanFacName(rawName, role, true);
       if (!valid) continue;
       const d = distM(pt.lat, pt.lng, eLat, eLon);
-      const score = (matchesRoad ? d * 0.4 : d + 800) + ((role !== "switch" && /JCT$/.test(valid)) ? 3000 : 0);
+      const score = (matchesRoad ? d * 0.4 : d + 600) + ((role !== "switch" && /JCT$/.test(valid)) ? 3000 : 0);
       if (!best || score < best.score) best = { name: valid, score };
     }
     if (best) return best.name;
@@ -313,14 +313,14 @@ async function searchRoadJunctions(pt, role, roadName) {
 
 async function searchTomtomPinpoint(pt, role, roadName = "") {
   const ttKey = (typeof getTomtomApiKey === "function") ? getTomtomApiKey() : "";
-  if (!ttKey) return null;
+  if (!ttKey || !pt) return null;
   const q = roadName
     ? `${roadName.replace(/(高速道路|自動車道|有料道路)$/, "")} ${role === "entry" ? "入口" : role === "exit" ? "出口" : "JCT"}`
     : (role === "entry" ? "出入口 IC 入口" : role === "exit" ? "出入口 IC 出口" : "JCT 料金所 IC");
   try {
     const [sRes, rRes] = await Promise.all([
-      fetchWithTimeout(`https://api.tomtom.com/search/2/search/${encodeURIComponent(q)}.json?key=${encodeURIComponent(ttKey)}&lat=${pt.lat}&lon=${pt.lng}&radius=2200&limit=10&language=ja-JP`, {}, 1100).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetchWithTimeout(`https://api.tomtom.com/search/2/reverseGeocode/${pt.lat},${pt.lng}.json?key=${encodeURIComponent(ttKey)}&language=ja-JP&radius=300`, {}, 1100).then(r => r.ok ? r.json() : null).catch(() => null)
+      fetchWithTimeout(`https://api.tomtom.com/search/2/search/${encodeURIComponent(q)}.json?key=${encodeURIComponent(ttKey)}&lat=${pt.lat}&lon=${pt.lng}&radius=2500&limit=10&language=ja-JP`, {}, 1200).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetchWithTimeout(`https://api.tomtom.com/search/2/reverseGeocode/${pt.lat},${pt.lng}.json?key=${encodeURIComponent(ttKey)}&language=ja-JP&radius=300`, {}, 1200).then(r => r.ok ? r.json() : null).catch(() => null)
     ]);
     let best = null;
     for (const r of (sRes?.results || [])) {
@@ -388,7 +388,6 @@ function extractExplicitIcHint(text) {
   return null;
 }
 
-// 運営区分ごとの料金重み計算（複数路線跨ぎのETC目安按分用）
 function estimateSegmentWeight(seg) {
   const km = seg.distM / 1000;
   if (seg.op.startsWith("urban_")) {
@@ -438,10 +437,24 @@ async function resolveMissingFacilityNames(ctx, hints = {}) {
     }
   }
 
-  const exitSteps = [...rawSteps].reverse().filter(s => s.isToll || s.isExit).slice(0, 2);
-  let exitName = explicitExit || exitSteps.map(s => parseStepFac(s.inst, "exit")).find(Boolean) || null;
-  const totalD = cumPath.length ? cumPath[cumPath.length - 1].d : tollEndD;
-  const exitPt = ptAtDist(cumPath, Math.max(tollStartD, Math.min(tollEndD, totalD - 200)));
+  // 出口ステップ検出（最後の有料ステップ〜流出直後の一般道合流ステップまで広く走査）
+  let lastTollIdx = -1;
+  for (let i = rawSteps.length - 1; i >= 0; i--) {
+    if (rawSteps[i].isToll || rawSteps[i].isExit) {
+      lastTollIdx = i;
+      break;
+    }
+  }
+  const exitCandidateSteps = [];
+  if (lastTollIdx >= 0) {
+    if (lastTollIdx > 0) exitCandidateSteps.push(rawSteps[lastTollIdx - 1]);
+    exitCandidateSteps.push(rawSteps[lastTollIdx]);
+    if (lastTollIdx + 1 < rawSteps.length) exitCandidateSteps.push(rawSteps[lastTollIdx + 1]);
+  }
+
+  let exitName = explicitExit || exitCandidateSteps.map(s => parseStepFac(s.inst, "exit")).find(Boolean) || null;
+  // 流出ICの座標は tollEndD（高速出口ランプ合流点）そのものを基準に検索
+  const exitPt = ptAtDist(cumPath, Math.max(tollStartD, tollEndD - 150));
   const lastRoad = curSeg?.roads?.slice(-1)[0] || entryStep.road || "";
 
   const [resolvedEntry, resolvedExit, ...resolvedSwitches] = await Promise.all([
