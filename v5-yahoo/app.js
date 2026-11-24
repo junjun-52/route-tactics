@@ -2,6 +2,7 @@
  * app.js
  * ROUTE TACTICS v5-yahoo 画面制御・オーケストレーション
  * - 自宅/周辺座標バイアス付き自動ジオコーディング対応
+ * - Leaflet + OpenStreetMap による本物の地図＆ルート描画対応
  */
 (() => {
   const { STORAGE_KEYS, DEFAULT_VEHICLE_SETTINGS } = RouteTacticsConfig;
@@ -13,6 +14,8 @@
     activeTargetField: 'dest', // 'origin' | 'dest'
     lastComparison: null,
     lastWeathers: {},
+    map: null,
+    mapLayerGroup: null,
   };
 
   // DOM要素キャッシュ
@@ -58,7 +61,7 @@
 
     summaryBanner: document.getElementById('summary-banner'),
     routesContainer: document.getElementById('routes-container'),
-    routeCanvas: document.getElementById('route-canvas'),
+    routeMap: document.getElementById('route-map'),
     mapCaption: document.getElementById('map-caption'),
 
     schemeToast: document.getElementById('scheme-toast'),
@@ -112,9 +115,6 @@
     );
   }
 
-  /**
-   * 検索バイアス基準座標（自宅が設定済みなら自宅、未設定なら稲沢・名古屋周辺）
-   */
   function getSearchBiasCoord() {
     const home = ProfileManager.getHomeLocation();
     if (home && isValidCoordPair(home.lat, home.lon)) {
@@ -124,8 +124,117 @@
   }
 
   /**
+   * Leaflet 地図を初期化
+   */
+  function initMap() {
+    if (!els.routeMap || typeof L === 'undefined') return;
+    if (state.map) return;
+
+    const bias = getSearchBiasCoord();
+    state.map = L.map(els.routeMap).setView([bias.lat, bias.lon], 11);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors',
+    }).addTo(state.map);
+
+    state.mapLayerGroup = L.layerGroup().addTo(state.map);
+  }
+
+  /**
+   * 地図上に3戦略のポリライン・マーカー・TomTom規制ポイントを描画
+   */
+  function renderRouteMap(comparison) {
+    if (!state.map || !state.mapLayerGroup) {
+      initMap();
+    }
+    if (!state.map || !state.mapLayerGroup) return;
+
+    state.mapLayerGroup.clearLayers();
+    if (!comparison || !Array.isArray(comparison.routes)) return;
+
+    const boundsLatLngs = [];
+
+    const styleMap = {
+      local: { color: '#059669', weight: 4, opacity: 0.85 },
+      mix: { color: '#d97706', weight: 5, opacity: 0.85, dashArray: '8, 6' },
+      highway: { color: '#2563eb', weight: 5, opacity: 0.9 },
+    };
+
+    // 下道 -> ミックス -> 高速 の順に描画
+    ['local', 'mix', 'highway'].forEach((strat) => {
+      const route = comparison.routes.find((r) => r.strategy === strat);
+      if (!route || !Array.isArray(route.path) || route.path.length < 2) return;
+
+      const latLngs = route.path.map((pt) => [pt.lat, pt.lon]);
+      latLngs.forEach((ll) => boundsLatLngs.push(ll));
+
+      const poly = L.polyline(latLngs, styleMap[strat]);
+      poly.bindTooltip(
+        `${route.label}：${formatDuration(route.durationSeconds)} / ${formatYen(
+          route.cost.totalCostYen
+        )}`,
+        { sticky: true }
+      );
+      poly.addTo(state.mapLayerGroup);
+    });
+
+    // TomTom 交通規制・事故ポイント
+    comparison.routes.forEach((route) => {
+      const incList = (route.incidents && route.incidents.incidents) || [];
+      incList.forEach((inc) => {
+        if (typeof inc.lat === 'number' && typeof inc.lon === 'number') {
+          const marker = L.circleMarker([inc.lat, inc.lon], {
+            radius: 6,
+            fillColor: '#dc2626',
+            color: '#ffffff',
+            weight: 2,
+            fillOpacity: 0.95,
+          });
+          marker.bindPopup(`⚠️ ${inc.description || '交通規制・情報あり'}`);
+          marker.addTo(state.mapLayerGroup);
+        }
+      });
+    });
+
+    // 出発地・目的地マーカー
+    const firstRoute = comparison.routes[0];
+    if (firstRoute) {
+      const oLatLng = [firstRoute.origin.lat, firstRoute.origin.lon];
+      const dLatLng = [firstRoute.destination.lat, firstRoute.destination.lon];
+      boundsLatLngs.push(oLatLng, dLatLng);
+
+      L.circleMarker(oLatLng, {
+        radius: 8,
+        fillColor: '#0f172a',
+        color: '#ffffff',
+        weight: 2.5,
+        fillOpacity: 1,
+      })
+        .bindPopup(`出発地：${firstRoute.origin.name}`)
+        .addTo(state.mapLayerGroup);
+
+      L.circleMarker(dLatLng, {
+        radius: 8,
+        fillColor: '#ff0033',
+        color: '#ffffff',
+        weight: 2.5,
+        fillOpacity: 1,
+      })
+        .bindPopup(`目的地：${firstRoute.destination.name}`)
+        .addTo(state.mapLayerGroup);
+    }
+
+    if (boundsLatLngs.length > 0) {
+      state.map.fitBounds(L.latLngBounds(boundsLatLngs), { padding: [32, 32] });
+    }
+
+    els.mapCaption.textContent =
+      '黒丸：出発地 / 赤丸：目的地 / 青線：全高速 / 橙点線：ミックス / 緑線：全下道 / 赤点：規制情報';
+  }
+
+  /**
    * 地点名・住所から緯度経度を自動取得（周辺バイアス付き）
-   * 優先順位：TomTom Search API -> Google Geocoding API -> OpenStreetMap Nominatim
    */
   async function geocodePlaceName(query, apiKeys = {}) {
     const q = String(query || '').trim();
@@ -136,7 +245,7 @@
     const { googleMapsKey = '', tomtomKey = '' } = apiKeys;
     const bias = getSearchBiasCoord();
 
-    // 1. TomTom Search API（周辺座標バイアス lat/lon を指定して同名他県を回避）
+    // 1. TomTom Search API
     if (tomtomKey) {
       try {
         const ttUrl =
@@ -148,7 +257,6 @@
         if (res.ok) {
           const data = await res.json();
           const results = data && Array.isArray(data.results) ? data.results : [];
-          // バイアス座標に最も近い有効候補を選択
           const valid = results.filter(
             (r) => r.position && isValidCoordPair(r.position.lat, r.position.lon)
           );
@@ -171,7 +279,7 @@
       }
     }
 
-    // 2. Google Geocoding API（周辺 bounds バイアス付き）
+    // 2. Google Geocoding API
     if (googleMapsKey) {
       try {
         const bounds = `${(bias.lat - 0.5).toFixed(3)},${(bias.lon - 0.5).toFixed(3)}|${(
@@ -199,7 +307,7 @@
       }
     }
 
-    // 3. OpenStreetMap Nominatim（周辺 viewbox バイアス付き）
+    // 3. OpenStreetMap Nominatim
     try {
       const viewbox = `${(bias.lon - 0.8).toFixed(3)},${(bias.lat + 0.8).toFixed(3)},${(
         bias.lon + 0.8
@@ -213,7 +321,6 @@
       if (res.ok) {
         const list = await res.json();
         if (Array.isArray(list) && list.length > 0) {
-          // バイアス座標に最も近い候補を優先
           list.sort((a, b) => {
             const da = Math.hypot(Number(a.lat) - bias.lat, Number(a.lon) - bias.lon);
             const db = Math.hypot(Number(b.lat) - bias.lat, Number(b.lon) - bias.lon);
@@ -606,114 +713,6 @@
     els.summaryBanner.classList.remove('is-hidden');
   }
 
-  function renderRouteCanvas(comparison) {
-    const canvas = els.routeCanvas;
-    const ctx = canvas.getContext('2d');
-    const dpr = window.devicePixelRatio || 1;
-    const rect = canvas.getBoundingClientRect();
-    const width = Math.max(300, Math.floor(rect.width || 960));
-    const height = Math.max(200, Math.floor(rect.height || 320));
-
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
-
-    if (!comparison || !Array.isArray(comparison.routes)) return;
-
-    const allPoints = [];
-    comparison.routes.forEach((r) => {
-      if (Array.isArray(r.path)) {
-        r.path.forEach((pt) => allPoints.push(pt));
-      }
-    });
-
-    if (allPoints.length < 2) {
-      els.mapCaption.textContent = '描画可能な軌跡データがありません。';
-      return;
-    }
-
-    let minLat = Infinity;
-    let maxLat = -Infinity;
-    let minLon = Infinity;
-    let maxLon = -Infinity;
-    allPoints.forEach((pt) => {
-      if (pt.lat < minLat) minLat = pt.lat;
-      if (pt.lat > maxLat) maxLat = pt.lat;
-      if (pt.lon < minLon) minLon = pt.lon;
-      if (pt.lon > maxLon) maxLon = pt.lon;
-    });
-
-    const pad = 28;
-    const spanLon = Math.max(1e-5, maxLon - minLon);
-    const spanLat = Math.max(1e-5, maxLat - minLat);
-
-    const toXY = (lat, lon) => {
-      const x = pad + ((lon - minLon) / spanLon) * (width - pad * 2);
-      const y = height - pad - ((lat - minLat) / spanLat) * (height - pad * 2);
-      return { x, y };
-    };
-
-    const colorMap = {
-      local: { stroke: '#059669', width: 3 },
-      mix: { stroke: '#d97706', width: 3.5 },
-      highway: { stroke: '#2563eb', width: 4 },
-    };
-
-    ['local', 'mix', 'highway'].forEach((strat) => {
-      const route = comparison.routes.find((r) => r.strategy === strat);
-      if (!route || !Array.isArray(route.path) || route.path.length < 2) return;
-
-      const style = colorMap[strat];
-      ctx.beginPath();
-      route.path.forEach((pt, idx) => {
-        const { x, y } = toXY(pt.lat, pt.lon);
-        if (idx === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
-      ctx.strokeStyle = style.stroke;
-      ctx.lineWidth = style.width;
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
-      ctx.stroke();
-    });
-
-    comparison.routes.forEach((route) => {
-      const incList = (route.incidents && route.incidents.incidents) || [];
-      incList.forEach((inc) => {
-        if (typeof inc.lat === 'number' && typeof inc.lon === 'number') {
-          const { x, y } = toXY(inc.lat, inc.lon);
-          ctx.beginPath();
-          ctx.arc(x, y, 5, 0, Math.PI * 2);
-          ctx.fillStyle = '#dc2626';
-          ctx.fill();
-          ctx.lineWidth = 1.5;
-          ctx.strokeStyle = '#ffffff';
-          ctx.stroke();
-        }
-      });
-    });
-
-    const firstRoute = comparison.routes[0];
-    if (firstRoute) {
-      const oXY = toXY(firstRoute.origin.lat, firstRoute.origin.lon);
-      const dXY = toXY(firstRoute.destination.lat, firstRoute.destination.lon);
-
-      ctx.beginPath();
-      ctx.arc(oXY.x, oXY.y, 7, 0, Math.PI * 2);
-      ctx.fillStyle = '#0f172a';
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.arc(dXY.x, dXY.y, 7, 0, Math.PI * 2);
-      ctx.fillStyle = '#ff0033';
-      ctx.fill();
-    }
-
-    els.mapCaption.textContent =
-      '黒丸：出発地 / 赤丸：目的地 / 赤点：TomTom交通規制・事故情報ポイント';
-  }
-
   async function handleCalculate() {
     const { origin, destination, vehicle, departureDate } = readFormInputs();
     const apiKeys = RouteTacticsConfig.getApiKeys();
@@ -792,7 +791,7 @@
 
       renderSummaryBanner(comparison);
       renderRouteCards(comparison, weathersByStrategy);
-      renderRouteCanvas(comparison);
+      renderRouteMap(comparison);
 
       setStatus(`試算完了：${resolvedOriginLabel} → ${resolvedDestLabel}`);
     } catch (err) {
@@ -936,12 +935,6 @@
       const ok = await NaviLauncher.copyUrlToClipboard(urlText);
       setStatus(ok ? 'スキームURLをコピーしました。' : 'コピーに失敗しました。');
     };
-
-    window.addEventListener('resize', () => {
-      if (state.lastComparison) {
-        renderRouteCanvas(state.lastComparison);
-      }
-    });
   }
 
   function init() {
@@ -954,6 +947,7 @@
     renderProfileSelect();
     renderLocationsUI();
     restoreLastFormState();
+    initMap();
     bindEvents();
   }
 
