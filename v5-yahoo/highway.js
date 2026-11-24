@@ -1,10 +1,9 @@
-// ===== 路線別ランプ照合対応 有料区間タイムライン＋ICワンタップコピー (v5-yahoo) =====
+// ===== 路線別ランプ照合対応 有料区間タイムライン＋ICワンタップコピー＋高速化 (v5-yahoo) =====
 let latestHwDetailHtml = "", latestMixDetailHtml = "";
 const ROAD_RE = /([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:自動車道|高速道路|有料道路|連絡道路|高速[0-9０-９号線]*|名二環|伊勢湾岸|セントレアライン|知多半島道路|知多横断道路|南知多道路|東海環状|東海北陸|東名|名神|新東名|新名神|中央道|北陸道|関越|東北道|常磐道|山陽道|中国道|九州道|圏央道|外環|首都高|阪神高速|名古屋高速|福岡高速|北九州高速|広島高速))/g;
 const OP_LABELS = { urban_nagoya: "名古屋高速", urban_tokyo: "首都高速", urban_hanshin: "阪神高速", urban_fukuoka: "福岡・北九州高速", urban_hiroshima: "広島高速", public_aichi: "知多半島・セントレアライン", honshi: "本四高速", nexco: "NEXCO高速" };
 const _facCache = new Map();
 
-// コピーボタン用スタイルを自動注入（style.css変更不要）
 (function injectIcCopyStyles() {
   if (typeof document === "undefined" || document.getElementById("rt-ic-copy-style")) return;
   const style = document.createElement("style");
@@ -126,38 +125,40 @@ function parseStepFac(inst, role) {
   }
   return null;
 }
-async function fetchWithTimeout(url, opts = {}, ms = 2500) {
+async function fetchWithTimeout(url, opts = {}, ms = 1000) {
   const ctrl = new AbortController(), id = setTimeout(() => ctrl.abort(), ms);
   try { return await fetch(url, { ...opts, signal: ctrl.signal }); } finally { clearTimeout(id); }
 }
 
-// 路線名（例：名古屋高速16号）から沿線のランプ・IC・JCT候補を優先照合
+// Overpass API 高速タイムアウト（900ms）で沿線ランプを照合
 async function searchRoadJunctions(pt, role, roadName) {
   if (!pt || !roadName) return null;
   const rKey = roadName.replace(/(高速道路|自動車道|線)$/, "");
-  const q = `[out:json][timeout:3];(node["highway"="motorway_junction"](around:2500,${pt.lat},${pt.lng});way["highway"="motorway_link"](around:2000,${pt.lat},${pt.lng});node["barrier"="toll_booth"](around:2000,${pt.lat},${pt.lng}););out center;`;
-  for (const ep of ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"]) {
-    try {
-      const res = await fetchWithTimeout(ep, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" }, body: "data=" + encodeURIComponent(q) }, 2200);
-      if (!res.ok) continue;
-      const data = await res.json();
-      let best = null;
-      for (const el of (data.elements || [])) {
-        const eLat = el.lat ?? el.center?.lat, eLon = el.lon ?? el.center?.lon;
-        if (typeof eLat !== "number") continue;
-        const tags = el.tags || {};
-        const rawName = tags.name || tags["name:ja"] || "";
-        const refText = `${tags.ref || ""} ${tags.destination || ""} ${tags["destination:ref"] || ""}`;
-        const matchesRoad = rawName.includes(rKey) || refText.includes(rKey);
-        const valid = cleanFacName(rawName, role, true);
-        if (!valid) continue;
-        const d = distM(pt.lat, pt.lng, eLat, eLon);
-        const score = (matchesRoad ? d * 0.4 : d + 800) + ((role !== "switch" && /JCT$/.test(valid)) ? 3000 : 0);
-        if (!best || score < best.score) best = { name: valid, score };
-      }
-      if (best) return best.name;
-    } catch (e) {}
-  }
+  const q = `[out:json][timeout:2];(node["highway"="motorway_junction"](around:2200,${pt.lat},${pt.lng});way["highway"="motorway_link"](around:1800,${pt.lat},${pt.lng});node["barrier"="toll_booth"](around:1800,${pt.lat},${pt.lng}););out center;`;
+  try {
+    const res = await fetchWithTimeout("https://overpass-api.de/api/interpreter", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+      body: "data=" + encodeURIComponent(q)
+    }, 900);
+    if (!res.ok) return null;
+    const data = await res.json();
+    let best = null;
+    for (const el of (data.elements || [])) {
+      const eLat = el.lat ?? el.center?.lat, eLon = el.lon ?? el.center?.lon;
+      if (typeof eLat !== "number") continue;
+      const tags = el.tags || {};
+      const rawName = tags.name || tags["name:ja"] || "";
+      const refText = `${tags.ref || ""} ${tags.destination || ""} ${tags["destination:ref"] || ""}`;
+      const matchesRoad = rawName.includes(rKey) || refText.includes(rKey);
+      const valid = cleanFacName(rawName, role, true);
+      if (!valid) continue;
+      const d = distM(pt.lat, pt.lng, eLat, eLon);
+      const score = (matchesRoad ? d * 0.4 : d + 800) + ((role !== "switch" && /JCT$/.test(valid)) ? 3000 : 0);
+      if (!best || score < best.score) best = { name: valid, score };
+    }
+    if (best) return best.name;
+  } catch (e) {}
   return null;
 }
 
@@ -167,8 +168,8 @@ async function searchTomtomPinpoint(pt, role, roadName = "") {
   const q = roadName ? `${roadName.replace(/(高速道路|自動車道)$/, "")} ${role === "entry" ? "入口" : role === "exit" ? "出口" : "JCT"}` : (role === "entry" ? "出入口 IC 入口" : role === "exit" ? "出入口 IC 出口" : "JCT 料金所 IC");
   try {
     const [sRes, rRes] = await Promise.all([
-      fetchWithTimeout(`https://api.tomtom.com/search/2/search/${encodeURIComponent(q)}.json?key=${encodeURIComponent(ttKey)}&lat=${pt.lat}&lon=${pt.lng}&radius=2200&limit=15&language=ja-JP`, {}, 2000).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetchWithTimeout(`https://api.tomtom.com/search/2/reverseGeocode/${pt.lat},${pt.lng}.json?key=${encodeURIComponent(ttKey)}&language=ja-JP&radius=300`, {}, 2000).then(r => r.ok ? r.json() : null).catch(() => null)
+      fetchWithTimeout(`https://api.tomtom.com/search/2/search/${encodeURIComponent(q)}.json?key=${encodeURIComponent(ttKey)}&lat=${pt.lat}&lon=${pt.lng}&radius=2200&limit=10&language=ja-JP`, {}, 1100).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetchWithTimeout(`https://api.tomtom.com/search/2/reverseGeocode/${pt.lat},${pt.lng}.json?key=${encodeURIComponent(ttKey)}&language=ja-JP&radius=300`, {}, 1100).then(r => r.ok ? r.json() : null).catch(() => null)
     ]);
     let best = null;
     for (const r of (sRes?.results || [])) {
@@ -223,14 +224,26 @@ function extractHighwayTimeline(route, legToll) {
   return { rawSteps, cumPath, tollStartD, tollEndD, legToll };
 }
 
-async function resolveMissingFacilityNames(ctx) {
+function extractExplicitIcHint(text) {
+  if (!text) return null;
+  const normalized = String(text).replace(/ＩＣ/g, "IC").replace(/ＪＣＴ/g, "JCT").trim();
+  if (/(スマートIC|IC|JCT|出入口|入口|出口|料金所)$/.test(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
+async function resolveMissingFacilityNames(ctx, hints = {}) {
   if (!ctx || !ctx.rawSteps || ctx.tollStartD === null) return [];
   const { rawSteps, cumPath, tollStartD, tollEndD, legToll } = ctx;
+
+  const explicitEntry = extractExplicitIcHint(hints.entryHint);
+  const explicitExit = extractExplicitIcHint(hints.exitHint);
 
   const entryStepIdx = rawSteps.findIndex(s => s.isToll);
   const entryStep = rawSteps[entryStepIdx];
   const prevStep = entryStepIdx > 0 ? rawSteps[entryStepIdx - 1] : null;
-  let entryName = parseStepFac(entryStep.inst, "entry") || (prevStep ? parseStepFac(prevStep.inst, "entry") : null);
+  let entryName = explicitEntry || parseStepFac(entryStep.inst, "entry") || (prevStep ? parseStepFac(prevStep.inst, "entry") : null);
   const entryPt = (prevStep && prevStep.d < 1500) ? ptAtDist(cumPath, prevStep.sD) : ptAtDist(cumPath, Math.max(0, tollStartD - 200));
 
   const segments = [];
@@ -256,7 +269,7 @@ async function resolveMissingFacilityNames(ctx) {
   }
 
   const exitSteps = [...rawSteps].reverse().filter(s => s.isToll || s.isExit).slice(0, 2);
-  let exitName = exitSteps.map(s => parseStepFac(s.inst, "exit")).find(Boolean) || null;
+  let exitName = explicitExit || exitSteps.map(s => parseStepFac(s.inst, "exit")).find(Boolean) || null;
   const totalD = cumPath.length ? cumPath[cumPath.length - 1].d : tollEndD;
   const exitPt = ptAtDist(cumPath, Math.max(tollStartD, Math.min(tollEndD, totalD - 200)));
   const lastRoad = curSeg?.roads?.slice(-1)[0] || entryStep.road || "";
@@ -294,13 +307,11 @@ async function resolveMissingFacilityNames(ctx) {
   return items;
 }
 
-// コピー用のクリーンなIC名を抽出（例: "一宮JCT（NEXCO高速 ➔ 名古屋高速）" -> "一宮JCT"）
 function getCleanIcCopyText(rawName) {
   if (!rawName) return "";
   return String(rawName).replace(/[（(][^）)]*[）)]/g, "").trim();
 }
 
-// ワンタップコピー実行（iPhone Safari / Android / PC すべて対応）
 async function copyIcName(btnEl, encodedText) {
   const text = decodeURIComponent(encodedText || "");
   if (!text) return;
