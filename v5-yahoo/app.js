@@ -1,11 +1,13 @@
-// ===== メイン制御・ルート検索・マルチソース渋滞解析・コスト計算・Yahoo!カーナビ連携 (v5-yahoo) =====
+// ===== メイン制御・ルート検索・共通経由/ミックス専用経由分離・Yahoo!カーナビ連携 (v5-yahoo) =====
 const API_KEY = "AIzaSyA-4TpNpWbRZMvQKvm2oP2KPi50KIvdvSA";
 const TOMTOM_KEY_STORAGE = "route_tactics_tomtom_api_key_v1";
-const MAX_WAYPOINTS = 5;
+const MAX_COMMON_WAYPOINTS = 3; // 全ルート共通経由地（最大3ヶ所）
+const MAX_WAYPOINTS = 5;        // ミックス専用経由地（最大5ヶ所）
 
 let currentOrigin = "";
 let currentDest = "";
-let currentMixLegs = []; // { from, to, avoidTolls, startCoord, endCoord }
+let currentCommonWaypoints = []; // { name, coord }
+let currentMixLegs = [];         // { from, to, avoidTolls, startCoord, endCoord }
 let currentRouteCoords = {
   origin: null,
   dest: null,
@@ -16,9 +18,12 @@ let currentMapInstance = null;
 let currentTrafficLayer = null;
 let isTrafficLayerOn = true;
 
-// 経由地データ（最大5ヶ所）
+// ① 全ルート共通経由地（全高速・ミックス・全下道すべてに反映）
+let commonWaypoints = []; // string[]
+
+// ② ミックス専用経由地（ミックスルートのみ反映）
 let waypoints = []; // { name: "", modeAfter: "local" | "highway" }
-let firstSegmentMode = "highway"; // 出発地 ➔ 経由地1 のモード
+let firstSegmentMode = "highway"; // 出発地（または最終共通経由地） ➔ ミックス経由1 のモード
 
 function escapeHtml(str) {
   return String(str)
@@ -40,6 +45,7 @@ function buildYahooNaviUrl({ destCoord, destName, viaList = [] }) {
     `name=${encodeURIComponent(destName || '目的地')}`,
   ];
 
+  // Yahoo!カーナビの経由地パラメータ（最大3件：via1〜via3）
   const validVias = (viaList || [])
     .filter(v => v && v.coord && typeof v.coord.latitude === 'number' && typeof v.coord.longitude === 'number')
     .slice(0, 3);
@@ -127,20 +133,30 @@ function buildGoogleMapsDirUrl({ originText, destText, waypointTexts = [], avoid
   return url;
 }
 
+// 全高速・全下道用（共通経由地のみ反映、ミックス専用経由は無視）
 function openYahooNaviNormal(avoidTolls) {
+  const viaList = currentCommonWaypoints.map(cw => ({
+    coord: cw.coord,
+    name: formatDisplayOrigin(cw.name),
+  }));
+
   const yahooUrl = buildYahooNaviUrl({
     destCoord: currentRouteCoords.dest,
     destName: formatDisplayOrigin(currentDest),
-    viaList: [],
+    viaList,
   });
+
   const gmapUrl = buildGoogleMapsDirUrl({
     originText: currentOrigin,
     destText: currentDest,
+    waypointTexts: currentCommonWaypoints.map(cw => cw.name),
     avoidTolls,
   });
+
   launchYahooNavi(yahooUrl, gmapUrl);
 }
 
+// ミックス一括起動（共通経由地＋ミックス専用経由地を反映）
 function openYahooNaviMixAll() {
   const viaList = currentMixLegs
     .slice(0, currentMixLegs.length - 1)
@@ -155,17 +171,22 @@ function openYahooNaviMixAll() {
     viaList,
   });
 
-  const wpTexts = waypoints.map(w => w.name.trim()).filter(Boolean);
+  const allWpTexts = [
+    ...currentCommonWaypoints.map(cw => cw.name),
+    ...waypoints.map(w => w.name.trim()).filter(Boolean),
+  ];
+
   const gmapUrl = buildGoogleMapsDirUrl({
     originText: currentOrigin,
     destText: currentDest,
-    waypointTexts: wpTexts,
+    waypointTexts: allWpTexts,
     avoidTolls: false,
   });
 
   launchYahooNavi(yahooUrl, gmapUrl);
 }
 
+// ミックス区間別起動
 function openYahooNaviLeg(legIndex) {
   const leg = currentMixLegs[legIndex];
   if (!leg) return;
@@ -228,7 +249,49 @@ function saveAllSettingsV41() {
   }
 }
 
-// ===== 経由地（MAX 5ヶ所）UI管理 =====
+// ===== ① 共通経由地（全ルートに反映：MAX 3ヶ所）UI管理 =====
+function addCommonWaypoint() {
+  if (commonWaypoints.length >= MAX_COMMON_WAYPOINTS) return;
+  commonWaypoints.push("");
+  renderCommonWaypoints();
+}
+
+function removeCommonWaypoint(idx) {
+  commonWaypoints.splice(idx, 1);
+  renderCommonWaypoints();
+}
+
+function updateCommonWaypointName(idx, val) {
+  commonWaypoints[idx] = val;
+}
+
+function renderCommonWaypoints() {
+  const container = document.getElementById('commonWaypointsContainer');
+  const addBtn = document.getElementById('btnAddCommonWaypoint');
+  if (!container || !addBtn) return;
+
+  container.innerHTML = '';
+  commonWaypoints.forEach((wpName, idx) => {
+    const box = document.createElement('div');
+    box.className = 'common-wp-box';
+    box.innerHTML = `
+      <div class="common-wp-head">
+        <label>📍 共通経由地 ${idx + 1}（全高速・ミックス・全下道すべて通過）</label>
+        <button type="button" class="btn-remove-wp" onclick="removeCommonWaypoint(${idx})">✕ 削除</button>
+      </div>
+      <input type="text" style="margin-bottom:0;" value="${escapeHtml(wpName)}" placeholder="例：立ち寄り先・SA/PA・施設名など" oninput="updateCommonWaypointName(${idx}, this.value)">
+    `;
+    container.appendChild(box);
+  });
+
+  const remain = MAX_COMMON_WAYPOINTS - commonWaypoints.length;
+  addBtn.disabled = remain <= 0;
+  addBtn.innerText = remain > 0
+    ? `＋ 共通経由地を追加（全ルートに反映・残り${remain}ヶ所）`
+    : `共通経由地は最大${MAX_COMMON_WAYPOINTS}ヶ所までです`;
+}
+
+// ===== ② ミックス専用経由地（ミックスのみ反映：MAX 5ヶ所）UI管理 =====
 function addWaypoint() {
   if (waypoints.length >= MAX_WAYPOINTS) return;
   waypoints.push({ name: "", modeAfter: "local" });
@@ -257,7 +320,7 @@ function renderWaypoints() {
     const firstBox = document.createElement('div');
     firstBox.className = 'first-seg-box';
     firstBox.innerHTML = `
-      <label style="color:var(--navy);">区間1：出発地 ➔ 経由地1 の走行モード</label>
+      <label style="color:var(--navy);">ミックス区間1：出発側 ➔ ミックス経由1 の走行モード</label>
       <select style="margin-bottom:0;" onchange="firstSegmentMode = this.value">
         <option value="highway" ${firstSegmentMode === 'highway' ? 'selected' : ''}>【高速】を利用</option>
         <option value="local" ${firstSegmentMode === 'local' ? 'selected' : ''}>【下道】のみ</option>
@@ -267,16 +330,16 @@ function renderWaypoints() {
   }
 
   waypoints.forEach((wp, idx) => {
-    const nextLabel = (idx === waypoints.length - 1) ? '目的地' : `経由地${idx + 2}`;
+    const nextLabel = (idx === waypoints.length - 1) ? '目的地' : `ミックス経由${idx + 2}`;
     const box = document.createElement('div');
     box.className = 'waypoint-box';
     box.innerHTML = `
       <div class="waypoint-head">
-        <label>経由地 ${idx + 1} / 乗り降りするIC名</label>
+        <label>🔀 ミックス経由 ${idx + 1} / 乗り降りするIC名（ミックスのみ）</label>
         <button type="button" class="btn-remove-wp" onclick="removeWaypoint(${idx})">✕ 削除</button>
       </div>
-      <input type="text" value="${escapeHtml(wp.name)}" placeholder="例：経由するIC名や地名を入力" oninput="updateWaypointName(${idx}, this.value)">
-      <label style="color:var(--orange-dark);">区間${idx + 2}：経由地${idx + 1} ➔ ${nextLabel} の走行モード</label>
+      <input type="text" value="${escapeHtml(wp.name)}" placeholder="例：乗り降りするIC名や切替地点を入力" oninput="updateWaypointName(${idx}, this.value)">
+      <label style="color:var(--orange-dark);">ミックス区間${idx + 2}：ミックス経由${idx + 1} ➔ ${nextLabel} の走行モード</label>
       <select style="margin-bottom:0;" onchange="updateWaypointMode(${idx}, this.value)">
         <option value="highway" ${wp.modeAfter === 'highway' ? 'selected' : ''}>【高速】を利用</option>
         <option value="local" ${wp.modeAfter === 'local' ? 'selected' : ''}>【下道】のみ</option>
@@ -288,8 +351,8 @@ function renderWaypoints() {
   const remain = MAX_WAYPOINTS - waypoints.length;
   addBtn.disabled = remain <= 0;
   addBtn.innerText = remain > 0
-    ? `＋ 経由地・乗降ICを追加（残り${remain}ヶ所）`
-    : `経由地は最大${MAX_WAYPOINTS}ヶ所までです`;
+    ? `＋ ミックス経由を追加（ミックスのみ反映・残り${remain}ヶ所）`
+    : `ミックス経由は最大${MAX_WAYPOINTS}ヶ所までです`;
 }
 
 // ===== 位置情報・日時・座標ヘルパー =====
@@ -476,7 +539,7 @@ async function fetchTomtomRouteSec(latLngPoints, avoidTolls, departureDate) {
   }
 }
 
-// ===== TomTom Traffic Incidents API v5（ルート周辺の事故・工事・規制取得） =====
+// ===== TomTom Traffic Incidents API v5 =====
 function decodeEncodedPathSafe(encoded) {
   if (!encoded) return [];
   if (typeof google !== 'undefined' && google.maps?.geometry?.encoding) {
@@ -641,7 +704,6 @@ async function fetchTomtomIncidentsAlongPolylines(encodedPolylines) {
   }
 }
 
-// ===== 渋滞・予測信頼度バッジ生成 =====
 function buildTrafficBadgeHtml({ googleSec, staticSec, pessimisticSec, tomtomSec, isFuture }) {
   const delayMin = Math.max(0, Math.round((googleSec - staticSec) / 60));
 
@@ -781,7 +843,6 @@ function calcStartEndTime(baseDt, mode, durationSec, maxRiskSec = null) {
   }
 }
 
-// ===== 高速の費用対効果（下道比・時間コスパ）HTML生成 =====
 function buildRoiRowsHtml(routeTotal, routeSec, loTotal, loSec, isBaseLocal) {
   if (isBaseLocal) {
     return `
@@ -834,7 +895,6 @@ function buildRoiRowsHtml(routeTotal, routeSec, loTotal, loSec, isBaseLocal) {
   `;
 }
 
-// ===== インシデントパネル制御 =====
 function toggleIncidentBody() {
   const body = document.getElementById('incidentBody');
   const txt = document.getElementById('incidentToggleText');
@@ -883,7 +943,7 @@ function renderIncidentsPanel(incidents, hasTomtom) {
   }).join('');
 }
 
-// ===== 比較実行（一括経由地検索でIC出口通過料金を確定＋高速化） =====
+// ===== 比較実行（共通経由地は全ルート反映・ミックス経由地はミックスのみ反映） =====
 async function calculateAll() {
   let origin = document.getElementById('origin').value.trim();
   const dest = document.getElementById('destination').value.trim();
@@ -913,10 +973,17 @@ async function calculateAll() {
 
   currentOrigin = origin;
   currentDest = dest;
+  currentCommonWaypoints = [];
   currentMixLegs = [];
   currentRouteCoords = { origin: null, dest: null };
 
-  const validWps = waypoints
+  // ① 全ルート共通経由地
+  const validCommonWps = commonWaypoints
+    .map(name => name.trim())
+    .filter(name => name !== "");
+
+  // ② ミックス専用経由地
+  const validMixWps = waypoints
     .map(w => ({ name: w.name.trim(), modeAfter: w.modeAfter }))
     .filter(w => w.name !== "");
 
@@ -938,26 +1005,39 @@ async function calculateAll() {
   hwDetailWrap.style.display = 'none';
   incidentWrap.style.display = 'none';
 
-  // 経由地がある場合は一括経由ルート（IC出口を通過させてETC料金を確定させる）も並列で取得
+  // ミックスルート用の区間定義（共通経由地を通過したあと、ミックス経由地を順番に処理）
   const legDefs = [];
-  if (validWps.length > 0) {
-    legDefs.push({ from: origin, to: validWps[0].name, avoidTolls: firstSegmentMode === 'local' });
-    for (let i = 0; i < validWps.length; i++) {
-      const to = (i === validWps.length - 1) ? dest : validWps[i + 1].name;
-      legDefs.push({ from: validWps[i].name, to, avoidTolls: validWps[i].modeAfter === 'local' });
+  if (validMixWps.length > 0) {
+    if (validCommonWps.length > 0) {
+      // 出発地 -> 共通経由1 -> ... -> 最終共通経由（ここまで高速/下道はfirstSegmentModeに準拠）
+      let prev = origin;
+      validCommonWps.forEach((cwName) => {
+        legDefs.push({ from: prev, to: cwName, avoidTolls: firstSegmentMode === 'local', isCommonLeg: true });
+        prev = cwName;
+      });
+      legDefs.push({ from: prev, to: validMixWps[0].name, avoidTolls: firstSegmentMode === 'local', isCommonLeg: false });
+    } else {
+      legDefs.push({ from: origin, to: validMixWps[0].name, avoidTolls: firstSegmentMode === 'local', isCommonLeg: false });
+    }
+
+    for (let i = 0; i < validMixWps.length; i++) {
+      const to = (i === validMixWps.length - 1) ? dest : validMixWps[i + 1].name;
+      legDefs.push({ from: validMixWps[i].name, to, avoidTolls: validMixWps[i].modeAfter === 'local', isCommonLeg: false });
     }
   }
-  const hasAnyHighwayInMix = legDefs.some(l => !l.avoidTolls);
-  const wpNames = validWps.map(w => w.name);
 
+  const hasAnyHighwayInMix = legDefs.some(l => !l.avoidTolls);
+  const allMixIntermediates = [...validCommonWps, ...validMixWps.map(w => w.name)];
+
+  // 全高速・全下道は「共通経由地のみ」を渡し、ミックス専用経由地は渡さない
   const [hwRoute, localRoute, combinedMixRoute, hwPessRoute, loPessRoute] = await Promise.all([
-    fetchRoute(origin, dest, false, apiDepartureDt, isFuture ? 'BEST_GUESS' : null),
-    fetchRoute(origin, dest, true, apiDepartureDt, isFuture ? 'BEST_GUESS' : null),
-    validWps.length > 0
-      ? fetchRoute(origin, dest, !hasAnyHighwayInMix, apiDepartureDt, isFuture ? 'BEST_GUESS' : null, wpNames)
+    fetchRoute(origin, dest, false, apiDepartureDt, isFuture ? 'BEST_GUESS' : null, validCommonWps),
+    fetchRoute(origin, dest, true, apiDepartureDt, isFuture ? 'BEST_GUESS' : null, validCommonWps),
+    validMixWps.length > 0
+      ? fetchRoute(origin, dest, !hasAnyHighwayInMix, apiDepartureDt, isFuture ? 'BEST_GUESS' : null, allMixIntermediates)
       : Promise.resolve(null),
-    isFuture ? fetchRoute(origin, dest, false, apiDepartureDt, 'PESSIMISTIC') : Promise.resolve(null),
-    isFuture ? fetchRoute(origin, dest, true, apiDepartureDt, 'PESSIMISTIC') : Promise.resolve(null)
+    isFuture ? fetchRoute(origin, dest, false, apiDepartureDt, 'PESSIMISTIC', validCommonWps) : Promise.resolve(null),
+    isFuture ? fetchRoute(origin, dest, true, apiDepartureDt, 'PESSIMISTIC', validCommonWps) : Promise.resolve(null)
   ]);
 
   if (!hwRoute || !localRoute) {
@@ -983,16 +1063,34 @@ async function calculateAll() {
     };
   }
 
+  // 共通経由地の座標も取得済みlegから抽出（Yahoo!カーナビのviaパラメータ用）
+  if (validCommonWps.length > 0 && Array.isArray(hwRoute.legs)) {
+    validCommonWps.forEach((cwName, idx) => {
+      const legEnd = hwRoute.legs[idx]?.endLocation?.latLng || null;
+      currentCommonWaypoints.push({
+        name: cwName,
+        coord: legEnd,
+      });
+    });
+  }
+
+  // TomTom クロスチェック用ポイント列（出発地 -> 共通経由地 -> 目的地）
+  const commonLatLngSeq = [
+    startLatLng,
+    ...currentCommonWaypoints.map(cw => cw.coord).filter(Boolean),
+    destLatLng
+  ].filter(Boolean);
+
   const weatherPromise = destLatLng
     ? fetchDestinationWeatherData(destLatLng.latitude, destLatLng.longitude)
     : Promise.resolve(null);
 
-  const ttHwPromise = (hasTomtom && startLatLng && destLatLng)
-    ? fetchTomtomRouteSec([startLatLng, destLatLng], false, apiDepartureDt)
+  const ttHwPromise = (hasTomtom && commonLatLngSeq.length >= 2)
+    ? fetchTomtomRouteSec(commonLatLngSeq, false, apiDepartureDt)
     : Promise.resolve(null);
 
-  const ttLoPromise = (hasTomtom && startLatLng && destLatLng)
-    ? fetchTomtomRouteSec([startLatLng, destLatLng], true, apiDepartureDt)
+  const ttLoPromise = (hasTomtom && commonLatLngSeq.length >= 2)
+    ? fetchTomtomRouteSec(commonLatLngSeq, true, apiDepartureDt)
     : Promise.resolve(null);
 
   const hwDist = hwRoute.distanceMeters / 1000;
@@ -1012,30 +1110,32 @@ async function calculateAll() {
   const loTotal = loGas;
 
   // 全高速ルートのタイムライン抽出
+  const hwHeadLabel = validCommonWps.length > 0
+    ? `${formatDisplayOrigin(origin)} ➔ ${validCommonWps.map(formatDisplayOrigin).join(' ➔ ')} ➔ ${dest}`
+    : `${formatDisplayOrigin(origin)} ➔ ${dest}`;
+
   const hwTimelineItems = extractHighwayTimeline(hwRoute, hwToll);
   const hwTimelinePromise = resolveMissingFacilityNames(hwTimelineItems).then(resolvedItems => {
     latestHwDetailHtml = `
       <div class="hw-leg-block">
-        <div class="hw-leg-head">${escapeHtml(formatDisplayOrigin(origin))} ➔ ${escapeHtml(dest)}</div>
+        <div class="hw-leg-head">${escapeHtml(hwHeadLabel)}</div>
         ${buildTimelineHtml(resolvedItems)}
       </div>
     `;
   });
   latestMixDetailHtml = "";
 
-  // ミックスルート集計（一括経由ルートをベースに、下道指定区間のみ必要に応じて個別補正）
+  // ミックスルート集計（ミックス専用経由地が1ヶ所以上あるときのみ）
   let mixData = null;
   const allEncodedPolysForIncidents = [
     hwRoute.polyline?.encodedPolyline,
     localRoute.polyline?.encodedPolyline
   ].filter(Boolean);
 
-  if (validWps.length > 0 && combinedMixRoute && Array.isArray(combinedMixRoute.legs) && combinedMixRoute.legs.length === legDefs.length) {
-    // 1. まず一括経由ルートから全体のETC料金を取得（IC出口を通過しているため正確な料金が返る）
+  if (validMixWps.length > 0 && combinedMixRoute && Array.isArray(combinedMixRoute.legs) && combinedMixRoute.legs.length === legDefs.length) {
     const combinedTollObj = extractApiToll(combinedMixRoute, !hasAnyHighwayInMix);
     let mixTotalToll = combinedTollObj.toll;
 
-    // 2. 各legの走行モードと実際の経路を照合し、下道指定なのに高速に乗った区間だけ下道で再取得
     const legEvaluations = await Promise.all(legDefs.map(async (leg, idx) => {
       const rawLeg = combinedMixRoute.legs[idx];
       const wantsLocal = leg.avoidTolls;
@@ -1070,7 +1170,6 @@ async function calculateAll() {
       };
     }));
 
-    // もし高速指定区間があるのに料金が0円だった場合の安全フォールバック（全高速ルートと同等の高速区間を走る場合など）
     const tollLegs = legEvaluations.filter(ev => ev.isTollLeg);
     if (tollLegs.length > 0 && mixTotalToll === 0 && hwToll > 0) {
       const totalTollDist = tollLegs.reduce((acc, ev) => acc + ev.distM, 0);
@@ -1079,10 +1178,9 @@ async function calculateAll() {
       }
     }
 
-    // 高速区間の距離比で各高速legへ料金按分
     const totalTollLegDist = tollLegs.reduce((acc, ev) => acc + ev.distM, 0);
     let allocatedToll = 0;
-    legEvaluations.forEach((ev, idx) => {
+    legEvaluations.forEach((ev) => {
       if (!ev.isTollLeg) {
         ev.allocatedToll = 0;
       } else if (tollLegs.length === 1) {
@@ -1133,7 +1231,6 @@ async function calculateAll() {
       modeLabels.push(ev.leg.avoidTolls ? '下道' : '高速');
     });
 
-    // ミックス各区間のICタイムラインを並列生成（経由地名そのものをICヒントとして渡す）
     const mixLegDetailBlocks = await Promise.all(legEvaluations.map(async (ev, i) => {
       const modeTag = ev.leg.avoidTolls ? '下道' : '高速';
       const dKm = ev.distM / 1000;
@@ -1178,7 +1275,7 @@ async function calculateAll() {
       total: totalGas + mixTotalToll,
       modeSummary: modeLabels.join('➔'),
       polylines,
-      wpNames
+      mixWpNames: validMixWps.map(w => w.name)
     };
   }
 
@@ -1226,13 +1323,18 @@ async function calculateAll() {
 
   renderIncidentsPanel(incidents, hasTomtom);
 
+  const commonBadgeText = validCommonWps.length > 0
+    ? `共通経由: ${validCommonWps.map(escapeHtml).join('・')}`
+    : '';
+
   if (!mixData) {
     const timeDiffMin = Math.round((loSec - hwSec) / 60);
     const costDiff = hwTotal - loTotal;
 
-    diffBanner.innerHTML = timeDiffMin > 0
+    const mainBanner = timeDiffMin > 0
       ? `高速利用で ${formatShortDurationFromMin(timeDiffMin)}短縮（コスト差 ＋${costDiff.toLocaleString()}円）`
       : `一般道でも所要時間はほぼ同等（${Math.abs(costDiff).toLocaleString()}円コスト削減）`;
+    diffBanner.innerHTML = commonBadgeText ? `${mainBanner}｜${commonBadgeText}` : mainBanner;
 
     compareGrid.className = 'compare-grid grid-2';
     compareGrid.innerHTML = `
@@ -1277,13 +1379,25 @@ async function calculateAll() {
       }
     ], incidents);
 
-    const gmapHwUrl = buildGoogleMapsDirUrl({ originText: currentOrigin, destText: currentDest, avoidTolls: false });
-    const gmapLoUrl = buildGoogleMapsDirUrl({ originText: currentOrigin, destText: currentDest, avoidTolls: true });
+    const gmapHwUrl = buildGoogleMapsDirUrl({
+      originText: currentOrigin,
+      destText: currentDest,
+      waypointTexts: validCommonWps,
+      avoidTolls: false,
+    });
+    const gmapLoUrl = buildGoogleMapsDirUrl({
+      originText: currentOrigin,
+      destText: currentDest,
+      waypointTexts: validCommonWps,
+      avoidTolls: true,
+    });
+
+    const commonViaNote = validCommonWps.length > 0 ? `（共通経由${validCommonWps.length}ヶ所セット）` : '';
 
     navButtons.innerHTML = `
       <div class="nav-group-label">▼ Yahoo!カーナビで起動（yjcarnavi://）</div>
-      <button type="button" class="btn-yahoo" onclick="openYahooNaviNormal(false)">🚗 Yahoo!カーナビ（全高速）でナビ開始</button>
-      <button type="button" class="btn-yahoo btn-yahoo-local" onclick="openYahooNaviNormal(true)">🚗 Yahoo!カーナビ（全下道・アプリ側で一般優先推奨）でナビ開始</button>
+      <button type="button" class="btn-yahoo" onclick="openYahooNaviNormal(false)">🚗 Yahoo!カーナビ（全高速）でナビ開始${commonViaNote}</button>
+      <button type="button" class="btn-yahoo btn-yahoo-local" onclick="openYahooNaviNormal(true)">🚗 Yahoo!カーナビ（全下道・一般優先推奨）でナビ開始${commonViaNote}</button>
       <div class="nav-group-label">▼ Googleマップ併用</div>
       <div class="sub-nav-grid">
         <a class="btn-sub-nav" href="${gmapHwUrl}" target="_blank" rel="noopener noreferrer">Googleマップ（高速）↗</a>
@@ -1297,7 +1411,7 @@ async function calculateAll() {
     switchHwDetailTab('hw');
 
   } else {
-    const wpSummary = mixData.wpNames.map(n => escapeHtml(n)).join(' ➔ ');
+    const wpSummary = mixData.mixWpNames.map(n => escapeHtml(n)).join(' ➔ ');
     const mixTrafficInfo = buildTrafficBadgeHtml({
       googleSec: mixData.sec,
       staticSec: mixData.staticSec,
@@ -1309,7 +1423,7 @@ async function calculateAll() {
     const mixWeatherHtml = getArrivalWeatherBadgeHtml(weatherData, mixTimes.end);
     const mixRoiHtml = buildRoiRowsHtml(mixData.total, mixData.sec, loTotal, loSec, false);
 
-    diffBanner.innerHTML = `3ルート戦略比較（経由地${mixData.wpNames.length}ヶ所: ${wpSummary}）`;
+    diffBanner.innerHTML = `3ルート戦略比較（ミックス経由${mixData.mixWpNames.length}ヶ所: ${wpSummary}${commonBadgeText ? ` / ${commonBadgeText}` : ''}）`;
     compareGrid.className = 'compare-grid grid-3';
     compareGrid.innerHTML = `
       <div class="card highway">
@@ -1370,28 +1484,37 @@ async function calculateAll() {
       return `<button type="button" class="${cls}" onclick="openYahooNaviLeg(${idx})">🚗 区間${idx + 1} [${modeTag}] Yahoo!カーナビ（${fromLabel} ➔ ${toLabel}）</button>`;
     }).join('');
 
-    const viaCount = Math.min(3, mixData.wpNames.length);
-    const viaNote = mixData.wpNames.length > 3 ? `※経由地が4ヶ所以上のため先頭3ヶ所をセット` : `経由地${viaCount}ヶ所セット`;
+    const totalViaCount = Math.min(3, allMixIntermediates.length);
+    const viaNote = allMixIntermediates.length > 3
+      ? `※経由地が4ヶ所以上のため先頭3ヶ所をセット`
+      : `経由地${totalViaCount}ヶ所セット`;
+
+    const commonViaNote = validCommonWps.length > 0 ? `・共通経由${validCommonWps.length}ヶ所` : '';
 
     const gmapMixUrl = buildGoogleMapsDirUrl({
       originText: currentOrigin,
       destText: currentDest,
-      waypointTexts: wpNames,
+      waypointTexts: allMixIntermediates,
       avoidTolls: false,
     });
-    const gmapHwUrl = buildGoogleMapsDirUrl({ originText: currentOrigin, destText: currentDest, avoidTolls: false });
+    const gmapHwUrl = buildGoogleMapsDirUrl({
+      originText: currentOrigin,
+      destText: currentDest,
+      waypointTexts: validCommonWps,
+      avoidTolls: false,
+    });
 
     navButtons.innerHTML = `
       <div class="nav-group-label">▼ ミックスルート Yahoo!カーナビ起動（${currentMixLegs.length}区間）</div>
       <button type="button" class="btn-yahoo" onclick="openYahooNaviMixAll()">🚗 Yahoo!カーナビで一括開始（${viaNote}）</button>
       ${legButtonsHtml}
-      <div class="nav-group-label">▼ 全高速 / 全下道 Yahoo!カーナビ起動</div>
-      <button type="button" class="btn-yahoo" style="background:var(--navy);" onclick="openYahooNaviNormal(false)">🚗 Yahoo!カーナビ（全高速）で開始</button>
-      <button type="button" class="btn-yahoo btn-yahoo-local" onclick="openYahooNaviNormal(true)">🚗 Yahoo!カーナビ（全下道・一般優先推奨）で開始</button>
+      <div class="nav-group-label">▼ 全高速 / 全下道 Yahoo!カーナビ起動（ミックス経由は除外）</div>
+      <button type="button" class="btn-yahoo" style="background:var(--navy);" onclick="openYahooNaviNormal(false)">🚗 Yahoo!カーナビ（全高速${commonViaNote}）で開始</button>
+      <button type="button" class="btn-yahoo btn-yahoo-local" onclick="openYahooNaviNormal(true)">🚗 Yahoo!カーナビ（全下道${commonViaNote}・一般優先推奨）で開始</button>
       <div class="nav-group-label">▼ Googleマップ併用</div>
       <div class="sub-nav-grid">
-        <a class="btn-sub-nav" href="${gmapMixUrl}" target="_blank" rel="noopener noreferrer">Googleマップ（経由地一括）↗</a>
-        <a class="btn-sub-nav" href="${gmapHwUrl}" target="_blank" rel="noopener noreferrer">Googleマップ（全高速）↗</a>
+        <a class="btn-sub-nav" href="${gmapMixUrl}" target="_blank" rel="noopener noreferrer">Googleマップ（ミックス一括）↗</a>
+        <a class="btn-sub-nav" href="${gmapHwUrl}" target="_blank" rel="noopener noreferrer">Googleマップ（全高速${commonViaNote}）↗</a>
       </div>
     `;
 
@@ -1529,6 +1652,7 @@ function drawMap(polylines, incidents = []) {
   if (ttInput && savedTtKey) ttInput.value = savedTtKey;
   updateTomtomButtonStatus();
 
+  renderCommonWaypoints();
   renderWaypoints();
   setNowDateTime();
 })();
