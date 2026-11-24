@@ -204,7 +204,7 @@ h3 {
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 14px;
 }
 
@@ -213,6 +213,8 @@ h3 {
   border-radius: 10px;
   padding: 12px;
   margin: 0;
+  min-width: 0;
+  overflow: hidden;
   background: var(--surface-subtle);
   display: flex;
   flex-direction: column;
@@ -229,6 +231,7 @@ h3 {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
   font-size: 0.82rem;
   font-weight: 600;
 }
@@ -236,6 +239,8 @@ h3 {
 .field input,
 .field select,
 .inline-inputs input {
+  width: 100%;
+  min-width: 0;
   padding: 8px 10px;
   border: 1px solid #cbd5e1;
   border-radius: 8px;
@@ -246,7 +251,7 @@ h3 {
 
 .two-cols {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px;
 }
 
@@ -374,6 +379,7 @@ button {
   flex-direction: column;
   justify-content: space-between;
   gap: 14px;
+  min-width: 0;
 }
 
 .route-card[data-strategy="highway"] {
@@ -409,7 +415,7 @@ button {
 
 .metrics-list {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px;
   background: var(--surface-subtle);
   padding: 10px;
