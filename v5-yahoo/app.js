@@ -13,17 +13,16 @@ let currentRouteCoords = {
   dest: null,
 };
 
-// 地図インスタンス・渋滞レイヤー管理
 let currentMapInstance = null;
 let currentTrafficLayer = null;
 let isTrafficLayerOn = true;
 
-// ① 全ルート共通経由地（全高速・ミックス・全下道すべてに反映）
+// ① 全ルート共通経由地
 let commonWaypoints = []; // string[]
 
-// ② ミックス専用経由地（ミックスルートのみ反映）
+// ② ミックス専用経由地
 let waypoints = []; // { name: "", modeAfter: "local" | "highway" }
-let firstSegmentMode = "highway"; // 出発地（または最終共通経由地） ➔ ミックス経由1 のモード
+let firstSegmentMode = "highway";
 
 function escapeHtml(str) {
   return String(str)
@@ -45,7 +44,6 @@ function buildYahooNaviUrl({ destCoord, destName, viaList = [] }) {
     `name=${encodeURIComponent(destName || '目的地')}`,
   ];
 
-  // Yahoo!カーナビの経由地パラメータ（最大3件：via1〜via3）
   const validVias = (viaList || [])
     .filter(v => v && v.coord && typeof v.coord.latitude === 'number' && typeof v.coord.longitude === 'number')
     .slice(0, 3);
@@ -133,7 +131,6 @@ function buildGoogleMapsDirUrl({ originText, destText, waypointTexts = [], avoid
   return url;
 }
 
-// 全高速・全下道用（共通経由地のみ反映、ミックス専用経由は無視）
 function openYahooNaviNormal(avoidTolls) {
   const viaList = currentCommonWaypoints.map(cw => ({
     coord: cw.coord,
@@ -156,7 +153,6 @@ function openYahooNaviNormal(avoidTolls) {
   launchYahooNavi(yahooUrl, gmapUrl);
 }
 
-// ミックス一括起動（共通経由地＋ミックス専用経由地を反映）
 function openYahooNaviMixAll() {
   const viaList = currentMixLegs
     .slice(0, currentMixLegs.length - 1)
@@ -186,7 +182,6 @@ function openYahooNaviMixAll() {
   launchYahooNavi(yahooUrl, gmapUrl);
 }
 
-// ミックス区間別起動
 function openYahooNaviLeg(legIndex) {
   const leg = currentMixLegs[legIndex];
   if (!leg) return;
@@ -498,7 +493,7 @@ async function fetchRoute(originText, destinationText, avoidTolls, departureDate
   }
 }
 
-// ===== TomTom Routing API（所要時間クロスチェック） =====
+// ===== TomTom Routing API =====
 async function fetchTomtomRouteSec(latLngPoints, avoidTolls, departureDate) {
   const ttKey = getTomtomApiKey();
   if (!ttKey || !Array.isArray(latLngPoints) || latLngPoints.length < 2) return null;
@@ -792,14 +787,6 @@ function extractApiToll(route, avoidTolls) {
   };
 }
 
-function legHasTollSteps(leg) {
-  if (!leg || !Array.isArray(leg.steps)) return false;
-  return leg.steps.some(step => {
-    const inst = step?.navigationInstruction?.instructions || '';
-    return /有料区間|有料道路/.test(inst);
-  });
-}
-
 function formatDuration(sec) {
   const totalMin = Math.round(sec / 60);
   const h = Math.floor(totalMin / 60);
@@ -977,12 +964,10 @@ async function calculateAll() {
   currentMixLegs = [];
   currentRouteCoords = { origin: null, dest: null };
 
-  // ① 全ルート共通経由地
   const validCommonWps = commonWaypoints
     .map(name => name.trim())
     .filter(name => name !== "");
 
-  // ② ミックス専用経由地
   const validMixWps = waypoints
     .map(w => ({ name: w.name.trim(), modeAfter: w.modeAfter }))
     .filter(w => w.name !== "");
@@ -1005,11 +990,10 @@ async function calculateAll() {
   hwDetailWrap.style.display = 'none';
   incidentWrap.style.display = 'none';
 
-  // ミックスルート用の区間定義（共通経由地を通過したあと、ミックス経由地を順番に処理）
+  // ミックスルート用の区間定義
   const legDefs = [];
   if (validMixWps.length > 0) {
     if (validCommonWps.length > 0) {
-      // 出発地 -> 共通経由1 -> ... -> 最終共通経由（ここまで高速/下道はfirstSegmentModeに準拠）
       let prev = origin;
       validCommonWps.forEach((cwName) => {
         legDefs.push({ from: prev, to: cwName, avoidTolls: firstSegmentMode === 'local', isCommonLeg: true });
@@ -1026,16 +1010,12 @@ async function calculateAll() {
     }
   }
 
-  const hasAnyHighwayInMix = legDefs.some(l => !l.avoidTolls);
   const allMixIntermediates = [...validCommonWps, ...validMixWps.map(w => w.name)];
 
-  // 全高速・全下道は「共通経由地のみ」を渡し、ミックス専用経由地は渡さない
-  const [hwRoute, localRoute, combinedMixRoute, hwPessRoute, loPessRoute] = await Promise.all([
+  // 全高速・全下道は「共通経由地のみ」を渡す
+  const [hwRoute, localRoute, hwPessRoute, loPessRoute] = await Promise.all([
     fetchRoute(origin, dest, false, apiDepartureDt, isFuture ? 'BEST_GUESS' : null, validCommonWps),
     fetchRoute(origin, dest, true, apiDepartureDt, isFuture ? 'BEST_GUESS' : null, validCommonWps),
-    validMixWps.length > 0
-      ? fetchRoute(origin, dest, !hasAnyHighwayInMix, apiDepartureDt, isFuture ? 'BEST_GUESS' : null, allMixIntermediates)
-      : Promise.resolve(null),
     isFuture ? fetchRoute(origin, dest, false, apiDepartureDt, 'PESSIMISTIC', validCommonWps) : Promise.resolve(null),
     isFuture ? fetchRoute(origin, dest, true, apiDepartureDt, 'PESSIMISTIC', validCommonWps) : Promise.resolve(null)
   ]);
@@ -1063,7 +1043,6 @@ async function calculateAll() {
     };
   }
 
-  // 共通経由地の座標も取得済みlegから抽出（Yahoo!カーナビのviaパラメータ用）
   if (validCommonWps.length > 0 && Array.isArray(hwRoute.legs)) {
     validCommonWps.forEach((cwName, idx) => {
       const legEnd = hwRoute.legs[idx]?.endLocation?.latLng || null;
@@ -1074,7 +1053,6 @@ async function calculateAll() {
     });
   }
 
-  // TomTom クロスチェック用ポイント列（出発地 -> 共通経由地 -> 目的地）
   const commonLatLngSeq = [
     startLatLng,
     ...currentCommonWaypoints.map(cw => cw.coord).filter(Boolean),
@@ -1109,7 +1087,6 @@ async function calculateAll() {
   const loGas = Math.round((loDist / eff) * gas);
   const loTotal = loGas;
 
-  // 全高速ルートのタイムライン抽出
   const hwHeadLabel = validCommonWps.length > 0
     ? `${formatDisplayOrigin(origin)} ➔ ${validCommonWps.map(formatDisplayOrigin).join(' ➔ ')} ➔ ${dest}`
     : `${formatDisplayOrigin(origin)} ➔ ${dest}`;
@@ -1125,158 +1102,115 @@ async function calculateAll() {
   });
   latestMixDetailHtml = "";
 
-  // ミックスルート集計（ミックス専用経由地が1ヶ所以上あるときのみ）
+  // ミックスルート集計（各区間の指定モード avoidTolls を厳密に適用）
   let mixData = null;
   const allEncodedPolysForIncidents = [
     hwRoute.polyline?.encodedPolyline,
     localRoute.polyline?.encodedPolyline
   ].filter(Boolean);
 
-  if (validMixWps.length > 0 && combinedMixRoute && Array.isArray(combinedMixRoute.legs) && combinedMixRoute.legs.length === legDefs.length) {
-    const combinedTollObj = extractApiToll(combinedMixRoute, !hasAnyHighwayInMix);
-    let mixTotalToll = combinedTollObj.toll;
+  if (validMixWps.length > 0) {
+    // 各区間を個別に取得（下道指定区間が高速へ再流入するのを完全に防止）
+    const legRoutes = await Promise.all(
+      legDefs.map(leg => fetchRoute(leg.from, leg.to, leg.avoidTolls, apiDepartureDt, null))
+    );
 
-    const legEvaluations = await Promise.all(legDefs.map(async (leg, idx) => {
-      const rawLeg = combinedMixRoute.legs[idx];
-      const wantsLocal = leg.avoidTolls;
-      const actuallyUsedToll = legHasTollSteps(rawLeg);
+    const allOk = legRoutes.every(r => r && r.legs && r.legs[0]);
+    if (allOk) {
+      let totalDist = 0;
+      let totalSec = 0;
+      let totalStaticSec = 0;
+      let totalToll = 0;
+      let hasAnyHighwayInMix = false;
+      const polylines = [];
+      const modeLabels = [];
+      const resolvedLegs = [];
 
-      if (wantsLocal && actuallyUsedToll) {
-        const localSegRoute = await fetchRoute(leg.from, leg.to, true, apiDepartureDt, null);
-        if (localSegRoute && localSegRoute.legs?.[0]) {
-          const l0 = localSegRoute.legs[0];
-          return {
-            leg,
-            legObj: l0,
-            poly: localSegRoute.polyline?.encodedPolyline || l0.polyline?.encodedPolyline || '',
-            intervals: localSegRoute.travelAdvisory?.speedReadingIntervals || [],
-            distM: localSegRoute.distanceMeters || l0.distanceMeters || 0,
-            sec: parseInt((localSegRoute.duration || l0.duration || '0s').replace('s', ''), 10) || 0,
-            staticSec: parseInt((localSegRoute.staticDuration || l0.staticDuration || localSegRoute.duration || '0s').replace('s', ''), 10) || 0,
-            isTollLeg: false
-          };
+      const mixLegDetailBlocks = await Promise.all(legDefs.map(async (leg, i) => {
+        const r = legRoutes[i];
+        const l0 = r.legs[0];
+        const dKm = (r.distanceMeters || l0.distanceMeters || 0) / 1000;
+        const sec = parseInt((r.duration || l0.duration || '0s').replace('s', ''), 10) || 0;
+        const stSec = parseInt((r.staticDuration || l0.staticDuration || r.duration || '0s').replace('s', ''), 10) || 0;
+        const poly = r.polyline?.encodedPolyline || l0.polyline?.encodedPolyline || '';
+
+        const tollObj = extractApiToll(r, leg.avoidTolls);
+        let legToll = tollObj.toll;
+
+        // 高速指定区間なのに終点IC手前判定で0円になった場合の距離比例フォールバック
+        if (!leg.avoidTolls) {
+          hasAnyHighwayInMix = true;
+          if (legToll === 0 && hwToll > 0 && hwDist > 0) {
+            const ratio = Math.min(1, Math.max(0.25, dKm / hwDist));
+            legToll = Math.round((hwToll * ratio) / 10) * 10;
+          }
         }
-      }
 
-      return {
-        leg,
-        legObj: rawLeg,
-        poly: rawLeg.polyline?.encodedPolyline || combinedMixRoute.polyline?.encodedPolyline || '',
-        intervals: combinedMixRoute.travelAdvisory?.speedReadingIntervals || [],
-        distM: rawLeg.distanceMeters || 0,
-        sec: parseInt((rawLeg.duration || '0s').replace('s', ''), 10) || 0,
-        staticSec: parseInt((rawLeg.staticDuration || rawLeg.duration || '0s').replace('s', ''), 10) || 0,
-        isTollLeg: !wantsLocal
-      };
-    }));
+        totalDist += dKm;
+        totalSec += sec;
+        totalStaticSec += stSec;
+        totalToll += legToll;
 
-    const tollLegs = legEvaluations.filter(ev => ev.isTollLeg);
-    if (tollLegs.length > 0 && mixTotalToll === 0 && hwToll > 0) {
-      const totalTollDist = tollLegs.reduce((acc, ev) => acc + ev.distM, 0);
-      if (totalTollDist > 0) {
-        mixTotalToll = hwToll;
-      }
-    }
+        const legStart = l0.startLocation?.latLng || null;
+        const legEnd = l0.endLocation?.latLng || null;
 
-    const totalTollLegDist = tollLegs.reduce((acc, ev) => acc + ev.distM, 0);
-    let allocatedToll = 0;
-    legEvaluations.forEach((ev) => {
-      if (!ev.isTollLeg) {
-        ev.allocatedToll = 0;
-      } else if (tollLegs.length === 1) {
-        ev.allocatedToll = mixTotalToll;
-      } else if (totalTollLegDist > 0) {
-        const isLastToll = tollLegs[tollLegs.length - 1] === ev;
-        if (isLastToll) {
-          ev.allocatedToll = Math.max(0, mixTotalToll - allocatedToll);
-        } else {
-          ev.allocatedToll = Math.round(((mixTotalToll * ev.distM) / totalTollLegDist) / 10) * 10;
-          allocatedToll += ev.allocatedToll;
-        }
-      } else {
-        ev.allocatedToll = 0;
-      }
-    });
-
-    let totalDist = 0;
-    let totalSec = 0;
-    let totalStaticSec = 0;
-    const polylines = [];
-    const modeLabels = [];
-    const resolvedLegs = [];
-
-    legEvaluations.forEach((ev) => {
-      const d = ev.distM / 1000;
-      totalDist += d;
-      totalSec += ev.sec;
-      totalStaticSec += ev.staticSec;
-
-      const legStart = ev.legObj.startLocation?.latLng || null;
-      const legEnd = ev.legObj.endLocation?.latLng || null;
-
-      resolvedLegs.push({
-        ...ev.leg,
-        startCoord: legStart,
-        endCoord: legEnd,
-      });
-
-      if (ev.poly) {
-        allEncodedPolysForIncidents.push(ev.poly);
-        polylines.push({
-          poly: ev.poly,
-          color: ev.leg.avoidTolls ? '#f36c21' : '#14233c',
-          intervals: ev.intervals
+        resolvedLegs.push({
+          ...leg,
+          startCoord: legStart,
+          endCoord: legEnd,
         });
-      }
-      modeLabels.push(ev.leg.avoidTolls ? '下道' : '高速');
-    });
 
-    const mixLegDetailBlocks = await Promise.all(legEvaluations.map(async (ev, i) => {
-      const modeTag = ev.leg.avoidTolls ? '下道' : '高速';
-      const dKm = ev.distM / 1000;
-      if (ev.leg.avoidTolls) {
+        if (poly) {
+          allEncodedPolysForIncidents.push(poly);
+          polylines.push({
+            poly,
+            color: leg.avoidTolls ? '#f36c21' : '#14233c',
+            intervals: r.travelAdvisory?.speedReadingIntervals || []
+          });
+        }
+        modeLabels.push(leg.avoidTolls ? '下道' : '高速');
+
+        const modeTag = leg.avoidTolls ? '下道' : '高速';
+        if (leg.avoidTolls) {
+          return `
+            <div class="hw-leg-block">
+              <div class="hw-leg-head">区間${i + 1} [${modeTag}]：${escapeHtml(formatDisplayOrigin(leg.from))} ➔ ${escapeHtml(formatDisplayOrigin(leg.to))}</div>
+              <div class="hw-empty">一般道区間（${dKm.toFixed(1)}km / ${formatDuration(sec)}）</div>
+            </div>
+          `;
+        }
+
+        const legItems = await resolveMissingFacilityNames(
+          extractHighwayTimeline(r, legToll),
+          { entryHint: leg.from, exitHint: leg.to }
+        );
         return `
           <div class="hw-leg-block">
-            <div class="hw-leg-head">区間${i + 1} [${modeTag}]：${escapeHtml(formatDisplayOrigin(ev.leg.from))} ➔ ${escapeHtml(formatDisplayOrigin(ev.leg.to))}</div>
-            <div class="hw-empty">一般道区間（${dKm.toFixed(1)}km / ${formatDuration(ev.sec)}）</div>
+            <div class="hw-leg-head">区間${i + 1} [${modeTag}]：${escapeHtml(formatDisplayOrigin(leg.from))} ➔ ${escapeHtml(formatDisplayOrigin(leg.to))}</div>
+            ${buildTimelineHtml(legItems)}
           </div>
         `;
-      }
+      }));
 
-      const miniRoute = {
-        legs: [ev.legObj],
-        polyline: { encodedPolyline: ev.poly }
+      currentMixLegs = resolvedLegs;
+      latestMixDetailHtml = mixLegDetailBlocks.join('');
+      const totalGas = Math.round((totalDist / eff) * gas);
+
+      mixData = {
+        dist: totalDist,
+        sec: totalSec,
+        staticSec: totalStaticSec,
+        pessSec: null,
+        tomtomSec: null,
+        gas: totalGas,
+        toll: totalToll,
+        sourceLabel: hasAnyHighwayInMix ? '根拠: Google Routes API（ETC参照）' : '全区間 一般道優先（有料道路回避）',
+        total: totalGas + totalToll,
+        modeSummary: modeLabels.join('➔'),
+        polylines,
+        mixWpNames: validMixWps.map(w => w.name)
       };
-      const legItems = await resolveMissingFacilityNames(
-        extractHighwayTimeline(miniRoute, ev.allocatedToll),
-        { entryHint: ev.leg.from, exitHint: ev.leg.to }
-      );
-      return `
-        <div class="hw-leg-block">
-          <div class="hw-leg-head">区間${i + 1} [${modeTag}]：${escapeHtml(formatDisplayOrigin(ev.leg.from))} ➔ ${escapeHtml(formatDisplayOrigin(ev.leg.to))}</div>
-          ${buildTimelineHtml(legItems)}
-        </div>
-      `;
-    }));
-
-    currentMixLegs = resolvedLegs;
-    latestMixDetailHtml = mixLegDetailBlocks.join('');
-    const totalGas = Math.round((totalDist / eff) * gas);
-
-    mixData = {
-      dist: totalDist,
-      sec: totalSec,
-      staticSec: totalStaticSec,
-      pessSec: null,
-      tomtomSec: null,
-      gas: totalGas,
-      toll: mixTotalToll,
-      sourceLabel: hasAnyHighwayInMix ? '根拠: Google Routes API（ETC参照）' : '全区間 一般道優先（有料道路回避）',
-      total: totalGas + mixTotalToll,
-      modeSummary: modeLabels.join('➔'),
-      polylines,
-      mixWpNames: validMixWps.map(w => w.name)
-    };
+    }
   }
 
   const [weatherData, ttHwRes, ttLoRes, incidents] = await Promise.all([
