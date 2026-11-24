@@ -1,7 +1,7 @@
 /**
  * app.js
  * ROUTE TACTICS v5-yahoo 画面制御・オーケストレーション
- * - 地点名・住所からの自動ジオコーディング（Google -> 国土地理院 -> Nominatim）対応
+ * - 地点名・住所からの自動ジオコーディング（TomTom Search -> Google -> Nominatim -> 国土地理院）対応
  */
 (() => {
   const { STORAGE_KEYS, DEFAULT_VEHICLE_SETTINGS } = RouteTacticsConfig;
@@ -113,15 +113,45 @@
   }
 
   /**
-   * 地点名・住所から緯度経度を自動取得（Google Geocoding -> 国土地理院 -> OpenStreetMap Nominatim）
+   * 地点名・住所から緯度経度を自動取得
+   * 優先順位：TomTom Search API -> Google Geocoding API -> OpenStreetMap Nominatim -> 国土地理院
    */
-  async function geocodePlaceName(query, googleMapsKey = '') {
+  async function geocodePlaceName(query, apiKeys = {}) {
     const q = String(query || '').trim();
     if (!q) {
       throw new Error('地点名または住所を入力してください。');
     }
 
-    // 1. Google Geocoding API（有効な場合）
+    const { googleMapsKey = '', tomtomKey = '' } = apiKeys;
+
+    // 1. TomTom Search API（日本の駅名・施設名・住所に非常に強い）
+    if (tomtomKey) {
+      try {
+        const ttUrl = `https://api.tomtom.com/search/2/search/${encodeURIComponent(
+          q
+        )}.json?key=${encodeURIComponent(tomtomKey)}&countrySet=JP&language=ja-JP&limit=1`;
+        const res = await fetch(ttUrl);
+        if (res.ok) {
+          const data = await res.json();
+          const hit = data && Array.isArray(data.results) && data.results[0];
+          if (hit && hit.position && isValidCoordPair(hit.position.lat, hit.position.lon)) {
+            return {
+              lat: Number(Number(hit.position.lat).toFixed(6)),
+              lon: Number(Number(hit.position.lon).toFixed(6)),
+              resolvedAddress:
+                (hit.address && hit.address.freeformAddress) ||
+                (hit.poi && hit.poi.name) ||
+                q,
+              source: 'TomTom',
+            };
+          }
+        }
+      } catch (e) {
+        console.warn('[Geocode] TomTom Search スキップ:', e.message);
+      }
+    }
+
+    // 2. Google Geocoding API（有効な場合）
     if (googleMapsKey) {
       try {
         const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
@@ -135,6 +165,7 @@
             return {
               lat: Number(loc.lat.toFixed(6)),
               lon: Number(loc.lng.toFixed(6)),
+              resolvedAddress: data.results[0].formatted_address || q,
               source: 'Google',
             };
           }
@@ -144,30 +175,7 @@
       }
     }
 
-    // 2. 国土地理院 住所検索API（無料・キー不要・日本の地名に強い）
-    try {
-      const gsiUrl = `https://msearch.gsi.go.jp/address-search/AddressSearch?q=${encodeURIComponent(
-        q
-      )}`;
-      const res = await fetch(gsiUrl);
-      if (res.ok) {
-        const list = await res.json();
-        if (Array.isArray(list) && list.length > 0 && list[0].geometry && list[0].geometry.coordinates) {
-          const [lon, lat] = list[0].geometry.coordinates;
-          if (isValidCoordPair(Number(lat), Number(lon))) {
-            return {
-              lat: Number(Number(lat).toFixed(6)),
-              lon: Number(Number(lon).toFixed(6)),
-              source: '国土地理院',
-            };
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('[Geocode] 国土地理院API スキップ:', e.message);
-    }
-
-    // 3. OpenStreetMap Nominatim（無料・キー不要・施設名や駅名にも対応）
+    // 3. OpenStreetMap Nominatim（無料・キー不要・駅名や施設名にも対応）
     try {
       const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=jp&q=${encodeURIComponent(
         q
@@ -184,6 +192,7 @@
             return {
               lat: Number(lat.toFixed(6)),
               lon: Number(lon.toFixed(6)),
+              resolvedAddress: list[0].display_name || q,
               source: 'OpenStreetMap',
             };
           }
@@ -193,7 +202,31 @@
       console.warn('[Geocode] Nominatim スキップ:', e.message);
     }
 
-    throw new Error(`「${q}」の緯度経度を取得できませんでした。住所を詳しく書くか緯度経度を直接入力してください。`);
+    // 4. 国土地理院 住所検索API（最終フォールバック：住所向け）
+    try {
+      const gsiUrl = `https://msearch.gsi.go.jp/address-search/AddressSearch?q=${encodeURIComponent(
+        q
+      )}`;
+      const res = await fetch(gsiUrl);
+      if (res.ok) {
+        const list = await res.json();
+        if (Array.isArray(list) && list.length > 0 && list[0].geometry && list[0].geometry.coordinates) {
+          const [lon, lat] = list[0].geometry.coordinates;
+          if (isValidCoordPair(Number(lat), Number(lon))) {
+            return {
+              lat: Number(Number(lat).toFixed(6)),
+              lon: Number(Number(lon).toFixed(6)),
+              resolvedAddress: (list[0].properties && list[0].properties.title) || q,
+              source: '国土地理院',
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Geocode] 国土地理院API スキップ:', e.message);
+    }
+
+    throw new Error(`「${q}」の座標を取得できませんでした。都道府県名などを付けて再試行してください。`);
   }
 
   /**
@@ -725,30 +758,35 @@
     els.btnCalculate.disabled = true;
 
     try {
+      let resolvedOriginLabel = origin.name;
+      let resolvedDestLabel = destination.name;
+
       // 出発地の座標が未入力なら地点名から自動ジオコーディング
       if (!isValidCoordPair(origin.lat, origin.lon)) {
         if (!origin.name) {
-          throw new Error('出発地の「地点名」または「緯度・経度」を入力してください。');
+          throw new Error('出発地の地点名・住所を入力してください。');
         }
         setStatus(`出発地「${origin.name}」の座標を検索中...`);
-        const geoOrigin = await geocodePlaceName(origin.name, apiKeys.googleMapsKey);
+        const geoOrigin = await geocodePlaceName(origin.name, apiKeys);
         origin.lat = geoOrigin.lat;
         origin.lon = geoOrigin.lon;
         els.originLat.value = origin.lat;
         els.originLon.value = origin.lon;
+        resolvedOriginLabel = `${origin.name}（${geoOrigin.resolvedAddress}）`;
       }
 
       // 目的地の座標が未入力なら地点名から自動ジオコーディング
       if (!isValidCoordPair(destination.lat, destination.lon)) {
         if (!destination.name) {
-          throw new Error('目的地の「地点名」または「緯度・経度」を入力してください。');
+          throw new Error('目的地の地点名・住所を入力してください。');
         }
         setStatus(`目的地「${destination.name}」の座標を検索中...`);
-        const geoDest = await geocodePlaceName(destination.name, apiKeys.googleMapsKey);
+        const geoDest = await geocodePlaceName(destination.name, apiKeys);
         destination.lat = geoDest.lat;
         destination.lon = geoDest.lon;
         els.destLat.value = destination.lat;
         els.destLon.value = destination.lon;
+        resolvedDestLabel = `${destination.name}（${geoDest.resolvedAddress}）`;
       }
 
       origin.name = origin.name || '出発地';
@@ -791,10 +829,7 @@
       renderRouteCanvas(comparison);
 
       setStatus(
-        `試算完了（${new Date().toLocaleTimeString('ja-JP', {
-          hour: '2-digit',
-          minute: '2-digit',
-        })} 更新）`
+        `試算完了：${resolvedOriginLabel} → ${resolvedDestLabel}`
       );
     } catch (err) {
       console.error('[App] 試算エラー:', err);
@@ -828,7 +863,7 @@
 
         if (!isValidCoordPair(lat, lon)) {
           setStatus(`「${name}」の座標を検索中...`);
-          const geo = await geocodePlaceName(name, RouteTacticsConfig.getApiKeys().googleMapsKey);
+          const geo = await geocodePlaceName(name, RouteTacticsConfig.getApiKeys());
           lat = geo.lat;
           lon = geo.lon;
         }
@@ -850,7 +885,7 @@
         if (!isValidCoordPair(lat, lon)) {
           if (!name) throw new Error('登録地名を入力してください。');
           setStatus(`「${name}」の座標を検索中...`);
-          const geo = await geocodePlaceName(name, RouteTacticsConfig.getApiKeys().googleMapsKey);
+          const geo = await geocodePlaceName(name, RouteTacticsConfig.getApiKeys());
           lat = geo.lat;
           lon = geo.lon;
         }
