@@ -7,8 +7,8 @@ let currentOrigin = "";
 let currentDest = "";
 let currentMixLegs = []; // { from, to, avoidTolls, startCoord, endCoord }
 let currentRouteCoords = {
-  origin: null, // { latitude, longitude, name }
-  dest: null,   // { latitude, longitude, name }
+  origin: null,
+  dest: null,
 };
 
 // 地図インスタンス・渋滞レイヤー管理
@@ -40,7 +40,6 @@ function buildYahooNaviUrl({ destCoord, destName, viaList = [] }) {
     `name=${encodeURIComponent(destName || '目的地')}`,
   ];
 
-  // Yahoo!カーナビの経由地パラメータ（最大3件：via1〜via3）
   const validVias = (viaList || [])
     .filter(v => v && v.coord && typeof v.coord.latitude === 'number' && typeof v.coord.longitude === 'number')
     .slice(0, 3);
@@ -387,8 +386,8 @@ function updateSourceBadge() {
   }
 }
 
-// ===== Google Routes API（渋滞ポリライン＆悲観予測対応） =====
-async function fetchRoute(originText, destinationText, avoidTolls, departureDate, trafficModel = null) {
+// ===== Google Routes API（単体＆経由地一括取得対応） =====
+async function fetchRoute(originText, destinationText, avoidTolls, departureDate, trafficModel = null, intermediateTexts = []) {
   try {
     const isFuture = departureDate && departureDate.getTime() > Date.now() + 120000;
     const useOptimal = isFuture && trafficModel;
@@ -408,6 +407,10 @@ async function fetchRoute(originText, destinationText, avoidTolls, departureDate
       regionCode: 'JP'
     };
 
+    if (Array.isArray(intermediateTexts) && intermediateTexts.length > 0) {
+      payload.intermediates = intermediateTexts.map(t => buildWaypointPayload(t));
+    }
+
     if (isFuture) {
       payload.departureTime = departureDate.toISOString();
       if (useOptimal) {
@@ -420,7 +423,7 @@ async function fetchRoute(originText, destinationText, avoidTolls, departureDate
       headers: {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': API_KEY,
-        'X-Goog-FieldMask': 'routes.duration,routes.staticDuration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.travelAdvisory.tollInfo,routes.travelAdvisory.speedReadingIntervals,routes.legs.startLocation,routes.legs.endLocation,routes.legs.steps.startLocation,routes.legs.steps.navigationInstruction,routes.legs.steps.distanceMeters,routes.legs.steps.staticDuration'
+        'X-Goog-FieldMask': 'routes.duration,routes.staticDuration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.travelAdvisory.tollInfo,routes.travelAdvisory.speedReadingIntervals,routes.legs.duration,routes.legs.staticDuration,routes.legs.distanceMeters,routes.legs.polyline.encodedPolyline,routes.legs.startLocation,routes.legs.endLocation,routes.legs.steps.startLocation,routes.legs.steps.navigationInstruction,routes.legs.steps.distanceMeters,routes.legs.steps.staticDuration'
       },
       body: JSON.stringify(payload)
     });
@@ -727,6 +730,14 @@ function extractApiToll(route, avoidTolls) {
   };
 }
 
+function legHasTollSteps(leg) {
+  if (!leg || !Array.isArray(leg.steps)) return false;
+  return leg.steps.some(step => {
+    const inst = step?.navigationInstruction?.instructions || '';
+    return /有料区間|有料道路/.test(inst);
+  });
+}
+
 function formatDuration(sec) {
   const totalMin = Math.round(sec / 60);
   const h = Math.floor(totalMin / 60);
@@ -872,7 +883,7 @@ function renderIncidentsPanel(incidents, hasTomtom) {
   }).join('');
 }
 
-// ===== 比較実行 =====
+// ===== 比較実行（一括経由地検索でIC出口通過料金を確定＋高速化） =====
 async function calculateAll() {
   let origin = document.getElementById('origin').value.trim();
   const dest = document.getElementById('destination').value.trim();
@@ -919,7 +930,7 @@ async function calculateAll() {
 
   resultArea.style.display = 'block';
   diffBanner.innerHTML = hasTomtom
-    ? 'Google Routes × TomTom API からマルチソース渋滞・ETC料金・IC詳細を解析中...'
+    ? 'Google Routes × TomTom API から渋滞・ETC料金・IC詳細を高速解析中...'
     : 'Google Routes API からルート・渋滞状況・ETC料金を取得中...';
   summaryBar.style.display = 'none';
   compareGrid.innerHTML = '';
@@ -927,9 +938,24 @@ async function calculateAll() {
   hwDetailWrap.style.display = 'none';
   incidentWrap.style.display = 'none';
 
-  const [hwRoute, localRoute, hwPessRoute, loPessRoute] = await Promise.all([
+  // 経由地がある場合は一括経由ルート（IC出口を通過させてETC料金を確定させる）も並列で取得
+  const legDefs = [];
+  if (validWps.length > 0) {
+    legDefs.push({ from: origin, to: validWps[0].name, avoidTolls: firstSegmentMode === 'local' });
+    for (let i = 0; i < validWps.length; i++) {
+      const to = (i === validWps.length - 1) ? dest : validWps[i + 1].name;
+      legDefs.push({ from: validWps[i].name, to, avoidTolls: validWps[i].modeAfter === 'local' });
+    }
+  }
+  const hasAnyHighwayInMix = legDefs.some(l => !l.avoidTolls);
+  const wpNames = validWps.map(w => w.name);
+
+  const [hwRoute, localRoute, combinedMixRoute, hwPessRoute, loPessRoute] = await Promise.all([
     fetchRoute(origin, dest, false, apiDepartureDt, isFuture ? 'BEST_GUESS' : null),
     fetchRoute(origin, dest, true, apiDepartureDt, isFuture ? 'BEST_GUESS' : null),
+    validWps.length > 0
+      ? fetchRoute(origin, dest, !hasAnyHighwayInMix, apiDepartureDt, isFuture ? 'BEST_GUESS' : null, wpNames)
+      : Promise.resolve(null),
     isFuture ? fetchRoute(origin, dest, false, apiDepartureDt, 'PESSIMISTIC') : Promise.resolve(null),
     isFuture ? fetchRoute(origin, dest, true, apiDepartureDt, 'PESSIMISTIC') : Promise.resolve(null)
   ]);
@@ -985,7 +1011,7 @@ async function calculateAll() {
   const loGas = Math.round((loDist / eff) * gas);
   const loTotal = loGas;
 
-  // 全高速ルートのタイムライン抽出＆座標からのIC・ランプ名補完（highway.js）
+  // 全高速ルートのタイムライン抽出
   const hwTimelineItems = extractHighwayTimeline(hwRoute, hwToll);
   const hwTimelinePromise = resolveMissingFacilityNames(hwTimelineItems).then(resolvedItems => {
     latestHwDetailHtml = `
@@ -997,126 +1023,163 @@ async function calculateAll() {
   });
   latestMixDetailHtml = "";
 
-  // ミックスルート計算（経由地が1ヶ所以上あるとき）
+  // ミックスルート集計（一括経由ルートをベースに、下道指定区間のみ必要に応じて個別補正）
   let mixData = null;
   const allEncodedPolysForIncidents = [
     hwRoute.polyline?.encodedPolyline,
     localRoute.polyline?.encodedPolyline
   ].filter(Boolean);
 
-  if (validWps.length > 0) {
-    const legDefs = [];
-    legDefs.push({ from: origin, to: validWps[0].name, avoidTolls: firstSegmentMode === 'local' });
-    for (let i = 0; i < validWps.length; i++) {
-      const to = (i === validWps.length - 1) ? dest : validWps[i + 1].name;
-      legDefs.push({ from: validWps[i].name, to, avoidTolls: validWps[i].modeAfter === 'local' });
+  if (validWps.length > 0 && combinedMixRoute && Array.isArray(combinedMixRoute.legs) && combinedMixRoute.legs.length === legDefs.length) {
+    // 1. まず一括経由ルートから全体のETC料金を取得（IC出口を通過しているため正確な料金が返る）
+    const combinedTollObj = extractApiToll(combinedMixRoute, !hasAnyHighwayInMix);
+    let mixTotalToll = combinedTollObj.toll;
+
+    // 2. 各legの走行モードと実際の経路を照合し、下道指定なのに高速に乗った区間だけ下道で再取得
+    const legEvaluations = await Promise.all(legDefs.map(async (leg, idx) => {
+      const rawLeg = combinedMixRoute.legs[idx];
+      const wantsLocal = leg.avoidTolls;
+      const actuallyUsedToll = legHasTollSteps(rawLeg);
+
+      if (wantsLocal && actuallyUsedToll) {
+        const localSegRoute = await fetchRoute(leg.from, leg.to, true, apiDepartureDt, null);
+        if (localSegRoute && localSegRoute.legs?.[0]) {
+          const l0 = localSegRoute.legs[0];
+          return {
+            leg,
+            legObj: l0,
+            poly: localSegRoute.polyline?.encodedPolyline || l0.polyline?.encodedPolyline || '',
+            intervals: localSegRoute.travelAdvisory?.speedReadingIntervals || [],
+            distM: localSegRoute.distanceMeters || l0.distanceMeters || 0,
+            sec: parseInt((localSegRoute.duration || l0.duration || '0s').replace('s', ''), 10) || 0,
+            staticSec: parseInt((localSegRoute.staticDuration || l0.staticDuration || localSegRoute.duration || '0s').replace('s', ''), 10) || 0,
+            isTollLeg: false
+          };
+        }
+      }
+
+      return {
+        leg,
+        legObj: rawLeg,
+        poly: rawLeg.polyline?.encodedPolyline || combinedMixRoute.polyline?.encodedPolyline || '',
+        intervals: combinedMixRoute.travelAdvisory?.speedReadingIntervals || [],
+        distM: rawLeg.distanceMeters || 0,
+        sec: parseInt((rawLeg.duration || '0s').replace('s', ''), 10) || 0,
+        staticSec: parseInt((rawLeg.staticDuration || rawLeg.duration || '0s').replace('s', ''), 10) || 0,
+        isTollLeg: !wantsLocal
+      };
+    }));
+
+    // もし高速指定区間があるのに料金が0円だった場合の安全フォールバック（全高速ルートと同等の高速区間を走る場合など）
+    const tollLegs = legEvaluations.filter(ev => ev.isTollLeg);
+    if (tollLegs.length > 0 && mixTotalToll === 0 && hwToll > 0) {
+      const totalTollDist = tollLegs.reduce((acc, ev) => acc + ev.distM, 0);
+      if (totalTollDist > 0) {
+        mixTotalToll = hwToll;
+      }
     }
+
+    // 高速区間の距離比で各高速legへ料金按分
+    const totalTollLegDist = tollLegs.reduce((acc, ev) => acc + ev.distM, 0);
+    let allocatedToll = 0;
+    legEvaluations.forEach((ev, idx) => {
+      if (!ev.isTollLeg) {
+        ev.allocatedToll = 0;
+      } else if (tollLegs.length === 1) {
+        ev.allocatedToll = mixTotalToll;
+      } else if (totalTollLegDist > 0) {
+        const isLastToll = tollLegs[tollLegs.length - 1] === ev;
+        if (isLastToll) {
+          ev.allocatedToll = Math.max(0, mixTotalToll - allocatedToll);
+        } else {
+          ev.allocatedToll = Math.round(((mixTotalToll * ev.distM) / totalTollLegDist) / 10) * 10;
+          allocatedToll += ev.allocatedToll;
+        }
+      } else {
+        ev.allocatedToll = 0;
+      }
+    });
 
     let totalDist = 0;
     let totalSec = 0;
     let totalStaticSec = 0;
-    let totalPessSec = 0;
-    let totalTtSec = 0;
-    let ttAllLegsOk = hasTomtom;
-    let totalToll = 0;
-    let runningDt = apiDepartureDt ? new Date(apiDepartureDt.getTime()) : null;
     const polylines = [];
     const modeLabels = [];
-    const mixLegDetailBlocks = [];
     const resolvedLegs = [];
-    let allSuccess = true;
-    let hasHighwayLeg = false;
 
-    for (let i = 0; i < legDefs.length; i++) {
-      const leg = legDefs[i];
-      const [route, pessRoute] = await Promise.all([
-        fetchRoute(leg.from, leg.to, leg.avoidTolls, runningDt, isFuture ? 'BEST_GUESS' : null),
-        isFuture ? fetchRoute(leg.from, leg.to, leg.avoidTolls, runningDt, 'PESSIMISTIC') : Promise.resolve(null)
-      ]);
+    legEvaluations.forEach((ev) => {
+      const d = ev.distM / 1000;
+      totalDist += d;
+      totalSec += ev.sec;
+      totalStaticSec += ev.staticSec;
 
-      if (!route) {
-        allSuccess = false;
-        break;
-      }
-
-      const d = route.distanceMeters / 1000;
-      const s = parseInt(route.duration.replace('s', ''), 10);
-      const stSec = route.staticDuration ? parseInt(route.staticDuration.replace('s', ''), 10) : s;
-      const psSec = pessRoute?.duration ? parseInt(pessRoute.duration.replace('s', ''), 10) : s;
-      const tObj = extractApiToll(route, leg.avoidTolls);
-
-      const legStart = route.legs?.[0]?.startLocation?.latLng || null;
-      const legEnd = route.legs?.[route.legs.length - 1]?.endLocation?.latLng || null;
-
-      if (ttAllLegsOk) {
-        const ttLeg = (legStart && legEnd)
-          ? await fetchTomtomRouteSec([legStart, legEnd], leg.avoidTolls, runningDt)
-          : null;
-        if (ttLeg) {
-          totalTtSec += ttLeg.sec;
-        } else {
-          ttAllLegsOk = false;
-        }
-      }
+      const legStart = ev.legObj.startLocation?.latLng || null;
+      const legEnd = ev.legObj.endLocation?.latLng || null;
 
       resolvedLegs.push({
-        ...leg,
+        ...ev.leg,
         startCoord: legStart,
         endCoord: legEnd,
       });
 
-      totalDist += d;
-      totalSec += s;
-      totalStaticSec += stSec;
-      totalPessSec += psSec;
-      totalToll += tObj.toll;
-      if (!leg.avoidTolls) hasHighwayLeg = true;
-      if (runningDt) runningDt = new Date(runningDt.getTime() + s * 1000);
+      if (ev.poly) {
+        allEncodedPolysForIncidents.push(ev.poly);
+        polylines.push({
+          poly: ev.poly,
+          color: ev.leg.avoidTolls ? '#f36c21' : '#14233c',
+          intervals: ev.intervals
+        });
+      }
+      modeLabels.push(ev.leg.avoidTolls ? '下道' : '高速');
+    });
 
-      if (route.polyline?.encodedPolyline) {
-        allEncodedPolysForIncidents.push(route.polyline.encodedPolyline);
+    // ミックス各区間のICタイムラインを並列生成（経由地名そのものをICヒントとして渡す）
+    const mixLegDetailBlocks = await Promise.all(legEvaluations.map(async (ev, i) => {
+      const modeTag = ev.leg.avoidTolls ? '下道' : '高速';
+      const dKm = ev.distM / 1000;
+      if (ev.leg.avoidTolls) {
+        return `
+          <div class="hw-leg-block">
+            <div class="hw-leg-head">区間${i + 1} [${modeTag}]：${escapeHtml(formatDisplayOrigin(ev.leg.from))} ➔ ${escapeHtml(formatDisplayOrigin(ev.leg.to))}</div>
+            <div class="hw-empty">一般道区間（${dKm.toFixed(1)}km / ${formatDuration(ev.sec)}）</div>
+          </div>
+        `;
       }
 
-      polylines.push({
-        poly: route.polyline.encodedPolyline,
-        color: leg.avoidTolls ? '#f36c21' : '#14233c',
-        intervals: route.travelAdvisory?.speedReadingIntervals || []
-      });
-      modeLabels.push(leg.avoidTolls ? '下道' : '高速');
-
-      const modeTag = leg.avoidTolls ? '下道' : '高速';
-      const legItems = leg.avoidTolls
-        ? []
-        : await resolveMissingFacilityNames(extractHighwayTimeline(route, tObj.toll));
-      mixLegDetailBlocks.push(`
-        <div class="hw-leg-block">
-          <div class="hw-leg-head">区間${i + 1} [${modeTag}]：${escapeHtml(formatDisplayOrigin(leg.from))} ➔ ${escapeHtml(formatDisplayOrigin(leg.to))}</div>
-          ${leg.avoidTolls
-            ? `<div class="hw-empty">一般道区間（${d.toFixed(1)}km / ${formatDuration(s)}）</div>`
-            : buildTimelineHtml(legItems)}
-        </div>
-      `);
-    }
-
-    if (allSuccess) {
-      currentMixLegs = resolvedLegs;
-      latestMixDetailHtml = mixLegDetailBlocks.join('');
-      const totalGas = Math.round((totalDist / eff) * gas);
-      mixData = {
-        dist: totalDist,
-        sec: totalSec,
-        staticSec: totalStaticSec,
-        pessSec: isFuture ? totalPessSec : null,
-        tomtomSec: ttAllLegsOk ? totalTtSec : null,
-        gas: totalGas,
-        toll: totalToll,
-        sourceLabel: hasHighwayLeg ? '根拠: Google Routes API（ETC参照）' : '全区間 一般道優先（有料道路回避）',
-        total: totalGas + totalToll,
-        modeSummary: modeLabels.join('➔'),
-        polylines,
-        wpNames: validWps.map(w => w.name)
+      const miniRoute = {
+        legs: [ev.legObj],
+        polyline: { encodedPolyline: ev.poly }
       };
-    }
+      const legItems = await resolveMissingFacilityNames(
+        extractHighwayTimeline(miniRoute, ev.allocatedToll),
+        { entryHint: ev.leg.from, exitHint: ev.leg.to }
+      );
+      return `
+        <div class="hw-leg-block">
+          <div class="hw-leg-head">区間${i + 1} [${modeTag}]：${escapeHtml(formatDisplayOrigin(ev.leg.from))} ➔ ${escapeHtml(formatDisplayOrigin(ev.leg.to))}</div>
+          ${buildTimelineHtml(legItems)}
+        </div>
+      `;
+    }));
+
+    currentMixLegs = resolvedLegs;
+    latestMixDetailHtml = mixLegDetailBlocks.join('');
+    const totalGas = Math.round((totalDist / eff) * gas);
+
+    mixData = {
+      dist: totalDist,
+      sec: totalSec,
+      staticSec: totalStaticSec,
+      pessSec: null,
+      tomtomSec: null,
+      gas: totalGas,
+      toll: mixTotalToll,
+      sourceLabel: hasAnyHighwayInMix ? '根拠: Google Routes API（ETC参照）' : '全区間 一般道優先（有料道路回避）',
+      total: totalGas + mixTotalToll,
+      modeSummary: modeLabels.join('➔'),
+      polylines,
+      wpNames
+    };
   }
 
   const [weatherData, ttHwRes, ttLoRes, incidents] = await Promise.all([
@@ -1310,11 +1373,10 @@ async function calculateAll() {
     const viaCount = Math.min(3, mixData.wpNames.length);
     const viaNote = mixData.wpNames.length > 3 ? `※経由地が4ヶ所以上のため先頭3ヶ所をセット` : `経由地${viaCount}ヶ所セット`;
 
-    const wpTexts = waypoints.map(w => w.name.trim()).filter(Boolean);
     const gmapMixUrl = buildGoogleMapsDirUrl({
       originText: currentOrigin,
       destText: currentDest,
-      waypointTexts: wpTexts,
+      waypointTexts: wpNames,
       avoidTolls: false,
     });
     const gmapHwUrl = buildGoogleMapsDirUrl({ originText: currentOrigin, destText: currentDest, avoidTolls: false });
