@@ -16,6 +16,23 @@
   })();
 </script>
 <style>
+  .common-wp-box {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    padding: 10px 12px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+  }
+  .common-wp-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .common-wp-head label {
+    margin-bottom: 0;
+    color: #1e3a8a;
+  }
   .btn-yahoo {
     display: block;
     width: 100%;
@@ -62,6 +79,7 @@
     font-weight: 700;
     cursor: pointer;
     text-align: center;
+    text-decoration: none;
   }
   .yj-toast {
     position: fixed;
@@ -241,7 +259,12 @@
     <div class="quick-chips" id="originChips"></div>
     <input type="text" id="origin" placeholder="出発地を入力（または上のボタンを選択）" value="">
 
-    <button type="button" class="btn-sub" id="btnAddWaypoint" onclick="addWaypoint()">＋ 経由地・乗降ICを追加（残り5ヶ所）</button>
+    <!-- ① 全ルート共通経由地（全高速・ミックス・全下道すべてに反映） -->
+    <button type="button" class="btn-sub" id="btnAddCommonWaypoint" onclick="addCommonWaypoint()" style="background:#eff6ff; border-color:#bfdbfe; color:#1e3a8a;">＋ 共通経由地を追加（全ルートに反映・残り3ヶ所）</button>
+    <div id="commonWaypointsContainer"></div>
+
+    <!-- ② ミックス専用経由地（ミックスルートだけが拾う乗降IC・切替ポイント） -->
+    <button type="button" class="btn-sub" id="btnAddWaypoint" onclick="addWaypoint()" style="background:#fff6f0; border-color:#f9cdb3; color:#d95812;">＋ ミックス経由を追加（ミックスのみ反映・残り5ヶ所）</button>
     <div id="waypointsContainer"></div>
 
     <label>目的地（ボタンでワンタップ入力）</label>
