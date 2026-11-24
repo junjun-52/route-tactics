@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ROUTE TACTICS v5-yahoo</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
@@ -145,10 +146,10 @@
     <!-- ルート戦略比較カード（全高速・ミックス・全下道） -->
     <section id="routes-container" class="routes-grid"></section>
 
-    <!-- ルートポリライン＆規制表示キャンバス -->
+    <!-- ルート地図（Leaflet + OpenStreetMap） -->
     <section class="card map-section">
       <div class="map-header">
-        <h2>🗺️ ルート軌跡・交通規制プレビュー</h2>
+        <h2>🗺️ ルート地図・交通規制プレビュー</h2>
         <div id="map-legend" class="map-legend">
           <span class="legend-item"><i class="swatch swatch-highway"></i>全高速</span>
           <span class="legend-item"><i class="swatch swatch-mix"></i>ミックス</span>
@@ -156,8 +157,8 @@
           <span class="legend-item"><i class="swatch swatch-incident"></i>規制/事故</span>
         </div>
       </div>
-      <canvas id="route-canvas" width="960" height="320"></canvas>
-      <p id="map-caption" class="hint-text">試算を実行すると、3戦略の軌跡とTomTom交通規制ポイントが描画されます。</p>
+      <div id="route-map" style="width: 100%; height: 380px; border-radius: 10px; border: 1px solid #e2e8f0; z-index: 1;"></div>
+      <p id="map-caption" class="hint-text">試算を実行すると、地図上に3戦略のルートとTomTom交通規制ポイントが表示されます。</p>
     </section>
   </main>
 
@@ -174,6 +175,7 @@
     </div>
   </div>
 
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="./config.js"></script>
   <script src="./profile.js"></script>
   <script src="./weather.js"></script>
