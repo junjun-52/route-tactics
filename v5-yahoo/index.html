@@ -40,15 +40,15 @@
           </div>
         </div>
 
-        <!-- 自宅＆登録地5ヶ所 -->
+        <!-- 自宅＆登録地5ヶ所（地点名・住所のみで登録可能） -->
         <div class="settings-box">
           <h2>🏠 自宅・登録地管理（自宅1＋登録地最大5件）</h2>
           <div class="sub-block">
             <h3>自宅設定</h3>
             <div class="inline-inputs">
-              <input type="text" id="home-name" placeholder="名称（例: 自宅）" />
-              <input type="number" id="home-lat" step="0.000001" placeholder="緯度 (例: 35.247)" />
-              <input type="number" id="home-lon" step="0.000001" placeholder="経度 (例: 136.787)" />
+              <input type="text" id="home-name" placeholder="住所・最寄り駅など（例: 稲沢駅）" />
+              <input type="hidden" id="home-lat" />
+              <input type="hidden" id="home-lon" />
               <button type="button" id="btn-save-home" class="btn-secondary">自宅保存</button>
             </div>
           </div>
@@ -56,9 +56,9 @@
           <div class="sub-block">
             <h3>登録地追加（残り <span id="saved-place-remain">5</span> 枠）</h3>
             <div class="inline-inputs">
-              <input type="text" id="place-name" placeholder="登録地名（例: 職場・道の駅）" />
-              <input type="number" id="place-lat" step="0.000001" placeholder="緯度" />
-              <input type="number" id="place-lon" step="0.000001" placeholder="経度" />
+              <input type="text" id="place-name" placeholder="登録地名・住所（例: 名古屋駅）" />
+              <input type="hidden" id="place-lat" />
+              <input type="hidden" id="place-lon" />
               <button type="button" id="btn-add-place" class="btn-secondary">追加</button>
             </div>
             <ul id="saved-places-list" class="saved-places-list"></ul>
@@ -82,19 +82,11 @@
         <fieldset class="loc-group">
           <legend>出発地</legend>
           <label class="field">
-            <span>地点名</span>
-            <input type="text" id="origin-name" placeholder="出発地名" />
+            <span>地点名・住所</span>
+            <input type="text" id="origin-name" placeholder="例: 稲沢駅" />
           </label>
-          <div class="two-cols">
-            <label class="field">
-              <span>緯度</span>
-              <input type="number" id="origin-lat" step="0.000001" placeholder="35.247000" />
-            </label>
-            <label class="field">
-              <span>経度</span>
-              <input type="number" id="origin-lon" step="0.000001" placeholder="136.787000" />
-            </label>
-          </div>
+          <input type="hidden" id="origin-lat" />
+          <input type="hidden" id="origin-lon" />
           <div class="mini-actions">
             <button type="button" id="btn-gps-origin" class="btn-ghost">📍 現在地を取得</button>
             <button type="button" id="btn-swap-locations" class="btn-ghost">⇅ 出発・目的入替</button>
@@ -105,19 +97,11 @@
         <fieldset class="loc-group">
           <legend>目的地</legend>
           <label class="field">
-            <span>地点名</span>
-            <input type="text" id="dest-name" placeholder="目的地名" />
+            <span>地点名・住所</span>
+            <input type="text" id="dest-name" placeholder="例: 高蔵寺" />
           </label>
-          <div class="two-cols">
-            <label class="field">
-              <span>緯度</span>
-              <input type="number" id="dest-lat" step="0.000001" placeholder="35.170915" />
-            </label>
-            <label class="field">
-              <span>経度</span>
-              <input type="number" id="dest-lon" step="0.000001" placeholder="136.881537" />
-            </label>
-          </div>
+          <input type="hidden" id="dest-lat" />
+          <input type="hidden" id="dest-lon" />
           <div class="mini-actions">
             <span class="hint-text">※登録地チップをクリックすると選択中フィールドへ入力されます</span>
           </div>
