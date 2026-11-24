@@ -250,7 +250,6 @@ function cleanFacName(raw, role, allowBare = false) {
 
 function parseStepFac(inst, role) {
   if (!inst) return null;
-  // 路線名プレフィックス（例: 「東名高速道路 春日井IC」）がくっついている場合も分離して抽出
   const cleaned = String(inst)
     .replace(/ＩＣ/g, "IC")
     .replace(/ＪＣＴ/g, "JCT")
@@ -437,7 +436,7 @@ async function resolveMissingFacilityNames(ctx, hints = {}) {
     }
   }
 
-  // 出口ステップ検出（最後の有料ステップ〜流出直後の一般道合流ステップまで広く走査）
+  // 出口ステップ検出（最後の有料ステップ前後〜流出直後の一般道ステップまで広く走査）
   let lastTollIdx = -1;
   for (let i = rawSteps.length - 1; i >= 0; i--) {
     if (rawSteps[i].isToll || rawSteps[i].isExit) {
@@ -447,13 +446,12 @@ async function resolveMissingFacilityNames(ctx, hints = {}) {
   }
   const exitCandidateSteps = [];
   if (lastTollIdx >= 0) {
-    if (lastTollIdx > 0) exitCandidateSteps.push(rawSteps[lastTollIdx - 1]);
-    exitCandidateSteps.push(rawSteps[lastTollIdx]);
-    if (lastTollIdx + 1 < rawSteps.length) exitCandidateSteps.push(rawSteps[lastTollIdx + 1]);
+    for (let k = Math.max(0, lastTollIdx - 1); k <= Math.min(rawSteps.length - 1, lastTollIdx + 3); k++) {
+      exitCandidateSteps.push(rawSteps[k]);
+    }
   }
 
   let exitName = explicitExit || exitCandidateSteps.map(s => parseStepFac(s.inst, "exit")).find(Boolean) || null;
-  // 流出ICの座標は tollEndD（高速出口ランプ合流点）そのものを基準に検索
   const exitPt = ptAtDist(cumPath, Math.max(tollStartD, tollEndD - 150));
   const lastRoad = curSeg?.roads?.slice(-1)[0] || entryStep.road || "";
 
