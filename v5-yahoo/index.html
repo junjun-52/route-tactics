@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ROUTE TACTICS v5-yahoo</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <div>
+        <h1 class="app-title">ROUTE TACTICS <span class="badge-v5">v5-yahoo</span></h1>
+        <p class="app-subtitle">事前コスト試算（Google Routes + TomTom）× Yahoo!カーナビ (yjcarnavi://) 連携</p>
+      </div>
+      <div class="header-actions">
+        <button type="button" id="btn-toggle-settings" class="btn-secondary">⚙️ API・地点設定</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- 折りたたみ式：APIキー・自宅・登録地(最大5件)の管理パネル -->
+    <section id="settings-panel" class="card settings-panel is-hidden">
+      <div class="settings-grid">
+        <!-- APIキー設定 -->
+        <div class="settings-box">
+          <h2>🔑 外部APIキー設定（ブラウザ保存）</h2>
+          <p class="hint-text">Open-Meteo はキー不要です。Google Routes API と TomTom API を入力してください。</p>
+          <label class="field">
+            <span>Google Maps / Routes API Key</span>
+            <input type="password" id="input-google-key" placeholder="AIza..." autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>TomTom API Key</span>
+            <input type="password" id="input-tomtom-key" placeholder="TomTom API Key" autocomplete="off" />
+          </label>
+          <div class="btn-row">
+            <button type="button" id="btn-save-api-keys" class="btn-primary">APIキーを保存</button>
+          </div>
+        </div>
+
+        <!-- 自宅＆登録地5ヶ所 -->
+        <div class="settings-box">
+          <h2>🏠 自宅・登録地管理（自宅1＋登録地最大5件）</h2>
+          <div class="sub-block">
+            <h3>自宅設定</h3>
+            <div class="inline-inputs">
+              <input type="text" id="home-name" placeholder="名称（例: 自宅）" />
+              <input type="number" id="home-lat" step="0.000001" placeholder="緯度 (例: 35.247)" />
+              <input type="number" id="home-lon" step="0.000001" placeholder="経度 (例: 136.787)" />
+              <button type="button" id="btn-save-home" class="btn-secondary">自宅保存</button>
+            </div>
+          </div>
+
+          <div class="sub-block">
+            <h3>登録地追加（残り <span id="saved-place-remain">5</span> 枠）</h3>
+            <div class="inline-inputs">
+              <input type="text" id="place-name" placeholder="登録地名（例: 職場・道の駅）" />
+              <input type="number" id="place-lat" step="0.000001" placeholder="緯度" />
+              <input type="number" id="place-lon" step="0.000001" placeholder="経度" />
+              <button type="button" id="btn-add-place" class="btn-secondary">追加</button>
+            </div>
+            <ul id="saved-places-list" class="saved-places-list"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- メイン入力コントロールパネル -->
+    <section class="card control-panel">
+      <div class="profile-bar">
+        <label class="field inline-field">
+          <span>プロファイル</span>
+          <select id="profile-select"></select>
+        </label>
+        <div id="quick-location-chips" class="quick-chips" aria-label="登録地ワンタップ入力"></div>
+      </div>
+
+      <div class="form-grid">
+        <!-- 出発地 -->
+        <fieldset class="loc-group">
+          <legend>出発地</legend>
+          <label class="field">
+            <span>地点名</span>
+            <input type="text" id="origin-name" placeholder="出発地名" />
+          </label>
+          <div class="two-cols">
+            <label class="field">
+              <span>緯度</span>
+              <input type="number" id="origin-lat" step="0.000001" placeholder="35.247000" />
+            </label>
+            <label class="field">
+              <span>経度</span>
+              <input type="number" id="origin-lon" step="0.000001" placeholder="136.787000" />
+            </label>
+          </div>
+          <div class="mini-actions">
+            <button type="button" id="btn-gps-origin" class="btn-ghost">📍 現在地を取得</button>
+            <button type="button" id="btn-swap-locations" class="btn-ghost">⇅ 出発・目的入替</button>
+          </div>
+        </fieldset>
+
+        <!-- 目的地 -->
+        <fieldset class="loc-group">
+          <legend>目的地</legend>
+          <label class="field">
+            <span>地点名</span>
+            <input type="text" id="dest-name" placeholder="目的地名" />
+          </label>
+          <div class="two-cols">
+            <label class="field">
+              <span>緯度</span>
+              <input type="number" id="dest-lat" step="0.000001" placeholder="35.170915" />
+            </label>
+            <label class="field">
+              <span>経度</span>
+              <input type="number" id="dest-lon" step="0.000001" placeholder="136.881537" />
+            </label>
+          </div>
+          <div class="mini-actions">
+            <span class="hint-text">※登録地チップをクリックすると選択中フィールドへ入力されます</span>
+          </div>
+        </fieldset>
+
+        <!-- 車両・日時パラメータ -->
+        <fieldset class="loc-group">
+          <legend>車両・日時条件</legend>
+          <div class="two-cols">
+            <label class="field">
+              <span>燃費 (km/L)</span>
+              <input type="number" id="fuel-eff" step="0.1" min="0.1" value="12.0" />
+            </label>
+            <label class="field">
+              <span>ガソリン単価 (円/L)</span>
+              <input type="number" id="fuel-price" step="1" min="0" value="175" />
+            </label>
+          </div>
+          <div class="two-cols">
+            <label class="field">
+              <span>基準SS単価 (円/L)</span>
+              <input type="number" id="ref-fuel-price" step="1" min="0" value="175" />
+            </label>
+            <label class="field">
+              <span>出発日時</span>
+              <input type="datetime-local" id="departure-time" />
+            </label>
+          </div>
+        </fieldset>
+      </div>
+
+      <div class="submit-row">
+        <button type="button" id="btn-calculate" class="btn-calculate">🚀 ルート戦略・コストを試算する</button>
+        <span id="status-message" class="status-message" role="status"></span>
+      </div>
+    </section>
+
+    <!-- 到着時刻天気＆直距離サマリー -->
+    <section id="summary-banner" class="summary-banner is-hidden"></section>
+
+    <!-- ルート戦略比較カード（全高速・ミックス・全下道） -->
+    <section id="routes-container" class="routes-grid"></section>
+
+    <!-- ルートポリライン＆規制表示キャンバス -->
+    <section class="card map-section">
+      <div class="map-header">
+        <h2>🗺️ ルート軌跡・交通規制プレビュー</h2>
+        <div id="map-legend" class="map-legend">
+          <span class="legend-item"><i class="swatch swatch-highway"></i>全高速</span>
+          <span class="legend-item"><i class="swatch swatch-mix"></i>ミックス</span>
+          <span class="legend-item"><i class="swatch swatch-local"></i>全下道</span>
+          <span class="legend-item"><i class="swatch swatch-incident"></i>規制/事故</span>
+        </div>
+      </div>
+      <canvas id="route-canvas" width="960" height="320"></canvas>
+      <p id="map-caption" class="hint-text">試算を実行すると、3戦略の軌跡とTomTom交通規制ポイントが描画されます。</p>
+    </section>
+  </main>
+
+  <!-- スキームURL確認・コピー用トースト/モーダル領域 -->
+  <div id="scheme-toast" class="scheme-toast is-hidden">
+    <div class="scheme-toast-body">
+      <div id="scheme-toast-title" class="scheme-toast-title"></div>
+      <code id="scheme-toast-url" class="scheme-toast-url"></code>
+      <div class="scheme-toast-actions">
+        <button type="button" id="btn-copy-scheme" class="btn-secondary">URLをコピー</button>
+        <a id="btn-fallback-gmap" href="#" target="_blank" rel="noopener noreferrer" class="btn-secondary">Googleマップで開く</a>
+        <button type="button" id="btn-close-toast" class="btn-ghost">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="./config.js"></script>
+  <script src="./profile.js"></script>
+  <script src="./weather.js"></script>
+  <script src="./navi-launcher.js"></script>
+  <script src="./route-engine.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
