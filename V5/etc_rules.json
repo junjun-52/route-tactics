@@ -1,0 +1,87 @@
+
+etc_rules.json
+100%
+{
+  "schemaVersion": "5.0.0",
+  "ruleVersion": "2026.11-nexco-dynamic",
+  "updatedAt": "2026-11-26T00:00:00+09:00",
+  "holidayApiUrl": "https://holidays-jp.github.io/api/v1/date.json",
+  "sources": [
+    {
+      "name": "NEXCO中日本 2026年度 休日割引適用日",
+      "url": "https://www.c-nexco.co.jp/topics/2421.html"
+    },
+    {
+      "name": "NEXCO東日本 2026年度 休日割引適用日",
+      "url": "https://www.e-nexco.co.jp/news/important_info/2026/0317/00016041.html"
+    },
+    {
+      "name": "NEXCO中日本 深夜割引の見直しについて",
+      "url": "https://dc2.c-nexco.co.jp/etc/discount/etc/night2/"
+    }
+  ],
+  "operatorPolicies": {
+    "nexco": { "label": "NEXCO高速", "holidayEligible": true, "midnightEligible": true },
+    "honshi": { "label": "本四高速", "holidayEligible": true, "midnightEligible": true },
+    "urban_nagoya": { "label": "名古屋高速", "holidayEligible": false, "midnightEligible": false },
+    "urban_tokyo": { "label": "首都高速", "holidayEligible": false, "midnightEligible": false },
+    "urban_hanshin": { "label": "阪神高速", "holidayEligible": false, "midnightEligible": false },
+    "urban_fukuoka": { "label": "福岡・北九州高速", "holidayEligible": false, "midnightEligible": false },
+    "urban_hiroshima": { "label": "広島高速", "holidayEligible": false, "midnightEligible": false },
+    "public_aichi": { "label": "知多半島・セントレアライン", "holidayEligible": false, "midnightEligible": false }
+  },
+  "vehicleClasses": {
+    "kei": { "label": "軽自動車等", "hereMode": "car", "holidayEligible": true, "midnightEligible": true },
+    "standard": { "label": "普通車", "hereMode": "car", "holidayEligible": true, "midnightEligible": true },
+    "medium": { "label": "中型車", "hereMode": "truck", "axleCount": 2, "grossWeight": 8000, "holidayEligible": false, "midnightEligible": true },
+    "large": { "label": "大型車", "hereMode": "truck", "axleCount": 3, "grossWeight": 20000, "holidayEligible": false, "midnightEligible": true },
+    "extra_large": { "label": "特大車", "hereMode": "truck", "axleCount": 4, "grossWeight": 25000, "holidayEligible": false, "midnightEligible": true }
+  },
+  "discounts": {
+    "holiday": {
+      "id": "holiday_discount",
+      "name": "ETC休日割引",
+      "enabled": true,
+      "rate": 0.30,
+      "weekendDays": [0, 6],
+      "includeNationalHolidays": true,
+      "excludedRanges": [
+        { "start": "2026-04-25", "end": "2026-05-06", "reason": "ゴールデンウィーク除外期間" },
+        { "start": "2026-08-08", "end": "2026-08-16", "reason": "お盆除外期間" },
+        { "start": "2026-09-19", "end": "2026-09-23", "reason": "シルバーウィーク除外期間" },
+        { "start": "2026-12-26", "end": "2027-01-04", "reason": "年末年始除外期間" },
+        { "start": "2027-01-09", "end": "2027-01-11", "reason": "3連休（成人の日）除外期間" },
+        { "start": "2027-02-20", "end": "2027-02-22", "reason": "3連休（天皇誕生日振替）除外期間" },
+        { "start": "2027-03-20", "end": "2027-03-22", "reason": "3連休（春分の日振替）除外期間" }
+      ],
+      "excludedDates": [
+        "2026-11-21",
+        "2026-11-22",
+        "2026-11-23"
+      ],
+      "caveat": "大都市近郊区間・一部路線は対象外。道路会社の突発的な規定変更により実際の請求額と微差が生じる場合があります。"
+    },
+    "midnight": {
+      "id": "midnight_discount",
+      "name": "ETC深夜割引",
+      "enabled": true,
+      "rate": 0.30,
+      "windowStartHour": 0,
+      "windowEndHour": 4,
+      "calculationMode": "overlap_full",
+      "caveat": "0:00〜4:00の通過判定。深夜割引見直し適用後は0〜4時走行分のみ後日還元となる場合があります。"
+    },
+    "weekdayCommute": {
+      "id": "weekday_morning_evening",
+      "name": "平日朝夕割引（ETCマイレージ還元目安）",
+      "enabled": true,
+      "applyDirectReduction": false,
+      "windows": [
+        { "startHour": 6, "endHour": 9 },
+        { "startHour": 17, "endHour": 20 }
+      ],
+      "note": "地方部対象・要マイレージ登録（月5〜9回利用で約30%、10回以上で約50%後日還元）"
+    }
+  }
+}
+etc_rules.json を表示しています。
