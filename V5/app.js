@@ -1,10 +1,17 @@
-// ===== メイン制御・HEREルート検索・動的割引＆ROI算出・Leaflet地図描画 (V5) =====
+// ===== メイン制御・HEREルート検索・動的割引＆ROI算出・Google Maps JS API描画 (V5) =====
 const MAX_WAYPOINTS = 5;
+const GMAPS_KEY_STORAGE = 'RT_GOOGLE_MAPS_API_KEY_V5';
 
 let currentOrigin = "";
 let currentDest = "";
 let currentMixLegs = []; // { from, to, avoidTolls }
-let leafletMapInstance = null;
+
+let googleMapInstance = null;
+let googleMapsLoaderPromise = null;
+let loadedGoogleMapsKey = "";
+let mapPolylines = { highway: null, mix: null, local: null };
+let mapMarkers = [];
+let latestRouteCoords = { highway: [], mix: [], local: [] };
 
 let waypoints = []; // { name: "", modeAfter: "local" | "highway" }
 let firstSegmentMode = "highway";
@@ -16,6 +23,68 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function getGoogleMapsApiKey() {
+  try {
+    return (localStorage.getItem(GMAPS_KEY_STORAGE) || "").trim();
+  } catch (e) {
+    return "";
+  }
+}
+
+function setGoogleMapsApiKey(key) {
+  try {
+    localStorage.setItem(GMAPS_KEY_STORAGE, (key || "").trim());
+  } catch (e) {}
+}
+
+function saveAllApiSettings() {
+  const gInput = document.getElementById('googleMapsApiKeyInput');
+  if (gInput) {
+    setGoogleMapsApiKey(gInput.value);
+  }
+  if (typeof saveApiSettingsAndReloadRules === 'function') {
+    saveApiSettingsAndReloadRules();
+  }
+}
+
+function ensureGoogleMapsLoaded(apiKey) {
+  if (!apiKey) {
+    return Promise.reject(new Error("Google Maps APIキーが未設定です"));
+  }
+  if (window.google && window.google.maps && loadedGoogleMapsKey === apiKey) {
+    return Promise.resolve(window.google.maps);
+  }
+  if (googleMapsLoaderPromise && loadedGoogleMapsKey === apiKey) {
+    return googleMapsLoaderPromise;
+  }
+
+  loadedGoogleMapsKey = apiKey;
+  googleMapsLoaderPromise = new Promise((resolve, reject) => {
+    const oldScript = document.getElementById('googleMapsSdkScript');
+    if (oldScript) oldScript.remove();
+
+    const callbackName = '__rtGoogleMapsInit_' + Date.now();
+    window[callbackName] = () => {
+      delete window[callbackName];
+      resolve(window.google.maps);
+    };
+
+    const script = document.createElement('script');
+    script.id = 'googleMapsSdkScript';
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&language=ja&region=JP&callback=${callbackName}`;
+    script.async = true;
+    script.defer = true;
+    script.onerror = () => {
+      delete window[callbackName];
+      googleMapsLoaderPromise = null;
+      reject(new Error("Google Maps JavaScript APIの読み込みに失敗しました。APIキーやリファラー制限を確認してください。"));
+    };
+    document.head.appendChild(script);
+  });
+
+  return googleMapsLoaderPromise;
 }
 
 function addWaypoint() {
@@ -230,41 +299,139 @@ function buildRoiRowsHtml(routeTotal, routeSec, loTotal, loSec, labelPrefix) {
   }
 }
 
-function renderLeafletMap(routeCoords, localCoords) {
+function toLatLngLiterals(coordsArray) {
+  if (!Array.isArray(coordsArray)) return [];
+  return coordsArray.map(pt => ({ lat: Number(pt[0]), lng: Number(pt[1]) }));
+}
+
+function setGoogleMapFilter(filterMode) {
+  if (!googleMapInstance) return;
+  if (mapPolylines.highway) {
+    mapPolylines.highway.setVisible(filterMode === 'all' || filterMode === 'highway');
+  }
+  if (mapPolylines.mix) {
+    mapPolylines.mix.setVisible(filterMode === 'all' || filterMode === 'mix');
+  }
+  if (mapPolylines.local) {
+    mapPolylines.local.setVisible(filterMode === 'all' || filterMode === 'local');
+  }
+}
+
+async function renderGoogleMap(hwCoords, mixCoords, localCoords) {
   const mapCard = document.getElementById('mapCard');
-  if (!mapCard || typeof L === 'undefined') return;
+  const noticeBox = document.getElementById('mapNoticeBox');
+  const mapCanvas = document.getElementById('mapCanvas');
+  if (!mapCard || !mapCanvas) return;
+
   mapCard.style.display = 'block';
+  latestRouteCoords = { highway: hwCoords, mix: mixCoords, local: localCoords };
 
-  if (!leafletMapInstance) {
-    leafletMapInstance = L.map('mapCanvas');
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
-      maxZoom: 18
-    }).addTo(leafletMapInstance);
-  }
-
-  leafletMapInstance.eachLayer((layer) => {
-    if (layer instanceof L.Polyline) {
-      leafletMapInstance.removeLayer(layer);
+  const gMapsKey = getGoogleMapsApiKey();
+  if (!gMapsKey) {
+    if (noticeBox) {
+      noticeBox.style.display = 'block';
+      noticeBox.innerText = '⚠️ Google Maps JavaScript APIキーが未設定です。右上の「⚙️」からAPIキーを入力するとここにGoogleマップが表示されます。';
     }
-  });
-
-  const boundsPoints = [];
-  if (Array.isArray(localCoords) && localCoords.length > 0) {
-    const localLine = L.polyline(localCoords, { color: '#1e7e48', weight: 4, opacity: 0.7, dashArray: '6,6' }).addTo(leafletMapInstance);
-    boundsPoints.push(...localLine.getLatLngs());
-  }
-  if (Array.isArray(routeCoords) && routeCoords.length > 0) {
-    const mainLine = L.polyline(routeCoords, { color: '#f36c21', weight: 5, opacity: 0.9 }).addTo(leafletMapInstance);
-    boundsPoints.push(...mainLine.getLatLngs());
+    return;
   }
 
-  if (boundsPoints.length > 0) {
-    leafletMapInstance.fitBounds(L.latLngBounds(boundsPoints), { padding: [24, 24] });
+  try {
+    const gmaps = await ensureGoogleMapsLoaded(gMapsKey);
+    if (noticeBox) noticeBox.style.display = 'none';
+
+    if (!googleMapInstance) {
+      googleMapInstance = new gmaps.Map(mapCanvas, {
+        center: { lat: 35.1815, lng: 136.9066 },
+        zoom: 11,
+        mapTypeControl: true,
+        streetViewControl: false,
+        fullscreenControl: true
+      });
+    }
+
+    Object.keys(mapPolylines).forEach((k) => {
+      if (mapPolylines[k]) {
+        mapPolylines[k].setMap(null);
+        mapPolylines[k] = null;
+      }
+    });
+    mapMarkers.forEach((m) => m.setMap(null));
+    mapMarkers = [];
+
+    const bounds = new gmaps.LatLngBounds();
+    const hwPath = toLatLngLiterals(hwCoords);
+    const mixPath = toLatLngLiterals(mixCoords);
+    const loPath = toLatLngLiterals(localCoords);
+
+    if (loPath.length > 0) {
+      mapPolylines.local = new gmaps.Polyline({
+        path: loPath,
+        geodesic: true,
+        strokeColor: '#1e7e48',
+        strokeOpacity: 0,
+        icons: [{
+          icon: { path: 'M 0,-1 0,1', strokeOpacity: 0.85, scale: 3 },
+          offset: '0',
+          repeat: '12px'
+        }],
+        zIndex: 1,
+        map: googleMapInstance
+      });
+      loPath.forEach(pt => bounds.extend(pt));
+    }
+
+    if (mixPath.length > 0) {
+      mapPolylines.mix = new gmaps.Polyline({
+        path: mixPath,
+        geodesic: true,
+        strokeColor: '#f36c21',
+        strokeOpacity: 0.85,
+        strokeWeight: 5,
+        zIndex: 2,
+        map: googleMapInstance
+      });
+      mixPath.forEach(pt => bounds.extend(pt));
+    }
+
+    if (hwPath.length > 0) {
+      mapPolylines.highway = new gmaps.Polyline({
+        path: hwPath,
+        geodesic: true,
+        strokeColor: '#14233c',
+        strokeOpacity: 0.9,
+        strokeWeight: 5,
+        zIndex: 3,
+        map: googleMapInstance
+      });
+      hwPath.forEach(pt => bounds.extend(pt));
+    }
+
+    const refPath = hwPath.length > 0 ? hwPath : (loPath.length > 0 ? loPath : mixPath);
+    if (refPath.length > 0) {
+      const startMarker = new gmaps.Marker({
+        position: refPath[0],
+        map: googleMapInstance,
+        label: { text: 'S', color: '#fff', fontWeight: 'bold' },
+        title: `出発地: ${formatDisplayOrigin(currentOrigin)}`
+      });
+      const endMarker = new gmaps.Marker({
+        position: refPath[refPath.length - 1],
+        map: googleMapInstance,
+        label: { text: 'G', color: '#fff', fontWeight: 'bold' },
+        title: `目的地: ${formatDisplayOrigin(currentDest)}`
+      });
+      mapMarkers.push(startMarker, endMarker);
+    }
+
+    if (!bounds.isEmpty()) {
+      googleMapInstance.fitBounds(bounds, 40);
+    }
+  } catch (err) {
+    if (noticeBox) {
+      noticeBox.style.display = 'block';
+      noticeBox.innerText = `⚠️ ${err.message}`;
+    }
   }
-  setTimeout(() => {
-    if (leafletMapInstance) leafletMapInstance.invalidateSize();
-  }, 150);
 }
 
 async function calculateRoutes() {
@@ -319,6 +486,7 @@ async function calculateRoutes() {
     let hwDist = 0, hwSec = 0, hwBaseToll = 0, hwDiscToll = 0;
     let loDist = 0, loSec = 0;
     const hwCoords = [];
+    const mixCoords = [];
     const loCoords = [];
     const hwDetailEntries = [];
 
@@ -354,6 +522,7 @@ async function calculateRoutes() {
       const avoidTollForMix = legModes[i] === true;
       const chosenRes = avoidTollForMix ? resLo : resHw;
       const chosenParsed = avoidTollForMix ? { baseTotalToll: 0, discountedTotalToll: 0 } : parsedHw;
+      mixCoords.push(...chosenRes.coords);
 
       hwLegs.push({
         from: formatDisplayOrigin(fromPt),
@@ -433,8 +602,8 @@ async function calculateRoutes() {
       weatherEl.innerText = wInfo ? `到着時天気（${wInfo.timeLabel}）: ${wInfo.label}` : '';
     }
 
-    renderLeafletMap(hwCoords, loCoords);
     document.getElementById('resultsArea').style.display = 'block';
+    await renderGoogleMap(hwCoords, mixCoords, loCoords);
     updateSourceBadge();
   } catch (err) {
     alert(`ルート計算エラー: ${err.message}`);
@@ -475,6 +644,12 @@ window.addEventListener('DOMContentLoaded', () => {
   setNowDateTime();
   loadActiveProfile();
   loadV5SettingsToUi();
+
+  const gKeyInput = document.getElementById('googleMapsApiKeyInput');
+  if (gKeyInput) {
+    gKeyInput.value = getGoogleMapsApiKey();
+  }
+
   renderWaypoints();
 
   const v5Settings = getV5Settings();
