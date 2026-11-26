@@ -1,6 +1,3 @@
-
-highway.js
-100%
 // ===== 有料区間の入口IC・出口IC・区間別ETC料金＆動的割引タイムライン (V5 / HERE対応) =====
 let latestHwDetailHtml = "";
 let latestMixDetailHtml = "";
@@ -41,7 +38,8 @@ function detectTollOperator(roadName) {
 
 function extractDrivingRoad(inst) {
   if (!inst) return "";
-  const withoutDir = inst.replace(/[^\s\/（）()]+?\s*方面の\s*/g, "");
+  const withoutDir = inst.replace(/[^
+\s/（）()]+?\s*方面の\s*/g, "");
   const matches = withoutDir.match(ROAD_NAME_RE);
   if (matches && matches.length > 0) {
     return normalizeRoadName(matches[matches.length - 1]);
@@ -74,7 +72,7 @@ function extractFacilityName(inst, role) {
     return `${prefix}${m[2]}`;
   }
 
-  const signMatch = inst.match(/[（(]([^（）()\/]+?)\s*の表示[）)]/);
+  const signMatch = inst.match(/[（(]([^（）()/]+?)\s*の表示[）)]/);
   if (signMatch) {
     const signText = signMatch[1].trim();
     const isRoad = new RegExp(ROAD_NAME_RE.source).test(signText);
@@ -96,315 +94,180 @@ function allocateSegmentTolls(segments, totalLegToll) {
     return;
   }
   if (segments.length === 1) {
-    segments[0].toll = totalLegToll;
+    segments[0].toll = Math.round(totalLegToll);
     segments[0].isEstimated = false;
     return;
   }
 
-  const weights = segments.map(seg => {
-    const km = seg.distM / 1000;
-    if (seg.operator && seg.operator.startsWith("urban_")) {
-      return Math.min(1320, Math.max(300, 300 + km * 45));
-    }
-    if (seg.operator === "public_aichi") {
-      return Math.max(200, 150 + km * 28);
-    }
-    return Math.max(300, 150 + km * 24.6);
-  });
-
+  const weights = segments.map(s => Math.max(s.durationSec || 0, s.distanceKm || 0, 1));
   const weightSum = weights.reduce((a, b) => a + b, 0);
-  let allocatedSum = 0;
+  let allocated = 0;
 
-  for (let i = 0; i < segments.length; i++) {
-    segments[i].isEstimated = true;
-    if (i === segments.length - 1) {
-      segments[i].toll = Math.max(0, totalLegToll - allocatedSum);
+  segments.forEach((seg, idx) => {
+    if (idx === segments.length - 1) {
+      seg.toll = Math.max(0, Math.round(totalLegToll - allocated));
     } else {
-      const raw = (totalLegToll * weights[i]) / weightSum;
-      const rounded = Math.round(raw / 10) * 10;
-      segments[i].toll = rounded;
-      allocatedSum += rounded;
+      const share = Math.round((totalLegToll * weights[idx]) / weightSum);
+      seg.toll = share;
+      allocated += share;
     }
-  }
+    seg.isEstimated = true;
+  });
 }
 
-/**
- * HERE Routing v8 の section.actions / section.spans から有料区間タイムラインを抽出
- */
-function extractHighwayTimelineFromHere(route, totalBaseToll, vehicleClass, baseStartDate) {
-  const items = [];
-  if (!route || !Array.isArray(route.sections)) {
-    return { items, segments: [], discountSummary: { totalBase: 0, totalDiscounted: 0, totalSavings: 0, appliedLabels: [], notes: [] } };
-  }
+function parseHighwaySegmentsFromHere(legResult, legStartTimeObj, legFromLabel, legToLabel, vehicleClass) {
+  const actions = legResult.actions || [];
+  const totalLegToll = Math.max(0, Math.round(Number(legResult.toll) || 0));
+  const totalLegSec = Math.max(0, Number(legResult.durationSec) || 0);
+  const totalLegKm = Math.max(0, Number(legResult.distanceKm) || 0);
 
   const segments = [];
-  let currentSeg = null;
-  let lastEndedSeg = null;
-  let currentOperator = null;
-  let currentRoad = "";
+  let current = null;
+  let elapsedSec = 0;
 
-  const startNewSegment = (roadName, operator) => {
-    currentSeg = {
-      kind: "seg",
-      roads: roadName ? [roadName] : [],
-      distM: 0,
-      sec: 0,
-      operator: operator || "nexco",
-      toll: 0,
-      baseToll: 0,
-      discountedToll: 0,
-      discountLabel: "",
-      discountSavings: 0,
+  for (let i = 0; i < actions.length; i++) {
+    const inst = actions[i].instruction || "";
+    const isTollAction = /有料|高速|自動車道|IC|ＩＣ|JCT|ＪＣＴ|本線料金所|料金所/.test(inst);
+    const road = extractDrivingRoad(inst);
+    const op = detectTollOperator(road);
+
+    if (!current && isTollAction && op) {
+      current = {
+        road: road || OPERATOR_LABELS[op] || "有料道路",
+        operator: op,
+        entryIc: extractFacilityName(inst, "entry") || `${legFromLabel}付近入口`,
+        exitIc: null,
+        startOffsetSec: elapsedSec,
+        endOffsetSec: elapsedSec,
+        durationSec: 0,
+        distanceKm: 0,
+        toll: 0,
+        isEstimated: false
+      };
+    } else if (current) {
+      const isExit = /出口|一般道|流出|降り/.test(inst) || (road && road !== current.road && !/JCT|ＪＣＴ/.test(inst));
+      if (isExit) {
+        current.exitIc = extractFacilityName(inst, "exit") || `${legToLabel}付近出口`;
+        current.endOffsetSec = elapsedSec;
+        current.durationSec = Math.max(60, current.endOffsetSec - current.startOffsetSec);
+        current.distanceKm = totalLegSec > 0 ? (totalLegKm * (current.durationSec / totalLegSec)) : 0;
+        segments.push(current);
+        current = null;
+      }
+    }
+
+    const stepSec = Math.max(15, Math.round(totalLegSec / Math.max(actions.length, 1)));
+    elapsedSec += stepSec;
+  }
+
+  if (current) {
+    current.exitIc = `${legToLabel}付近出口`;
+    current.endOffsetSec = Math.max(current.startOffsetSec + 60, totalLegSec);
+    current.durationSec = Math.max(60, current.endOffsetSec - current.startOffsetSec);
+    current.distanceKm = totalLegSec > 0 ? (totalLegKm * (current.durationSec / totalLegSec)) : 0;
+    segments.push(current);
+  }
+
+  if (segments.length === 0 && totalLegToll > 0) {
+    segments.push({
+      road: `${legFromLabel} ➔ ${legToLabel} 有料区間`,
+      operator: "nexco",
+      entryIc: `${legFromLabel}付近`,
+      exitIc: `${legToLabel}付近`,
+      startOffsetSec: 0,
+      endOffsetSec: totalLegSec,
+      durationSec: totalLegSec,
+      distanceKm: totalLegKm,
+      toll: totalLegToll,
       isEstimated: false
-    };
-    segments.push(currentSeg);
-    items.push(currentSeg);
-  };
-
-  const addRoadToCurrentSeg = (roadName) => {
-    if (!currentSeg || !roadName) return;
-    if (!currentSeg.roads.includes(roadName)) {
-      currentSeg.roads.push(roadName);
-    }
-  };
-
-  for (const section of route.sections) {
-    const actions = section.actions || [];
-    // spans から有料区間が存在するか確認
-    const hasTollSpans = Array.isArray(section.spans) && section.spans.some(
-      sp => Array.isArray(sp.carAttributes) && sp.carAttributes.includes("tollRoad")
-    );
-
-    let inToll = false;
-    let exitingToll = false;
-
-    for (let i = 0; i < actions.length; i++) {
-      const act = actions[i];
-      const inst = (act.instruction || "").replace(/\n+/g, " ").trim();
-      const actionType = act.action || "";
-      const distM = act.length || 0;
-      const sec = act.duration || 0;
-
-      const stepRoad = extractDrivingRoad(inst);
-      const hasTollHint = /有料|高速|自動車道|ランプ|インター|IC|JCT/.test(inst) || Boolean(stepRoad);
-      const isGeneralRoad = /(国道|県道|府道|都道|市道|町道|通り|交差点)/.test(inst) && !stepRoad;
-      const isExitAction = actionType === "exit" || actionType === "ramp" && /出口|降りる|出る/.test(inst) || /出口を|出口へ|降りる/.test(inst);
-
-      const isTollStep = (hasTollHint && !isGeneralRoad) || (inToll && !isGeneralRoad && !isExitAction);
-
-      if (!isTollStep) {
-        if (inToll) {
-          let exitName = extractFacilityName(inst, "exit") || (act.exitSign?.text ? act.exitSign.text : null);
-          if (!exitName && i > 0) {
-            exitName = extractFacilityName(actions[i - 1]?.instruction || "", "exit");
-          }
-          items.push({
-            kind: "node",
-            type: "exit",
-            badgeText: "出口",
-            name: exitName || (currentRoad ? `${currentRoad} 出口` : "有料区間出口")
-          });
-        }
-        inToll = false;
-        exitingToll = false;
-        currentSeg = null;
-        lastEndedSeg = null;
-        currentOperator = null;
-        currentRoad = "";
-        continue;
-      }
-
-      const effectiveRoad = stepRoad || currentRoad;
-      const stepOp = detectTollOperator(effectiveRoad) || currentOperator || "nexco";
-      const isTollGate = /本線料金所|料金所/.test(inst);
-
-      if (exitingToll) {
-        const isReEntry = /入口|に入る|合流/.test(inst) && !isExitAction && !isTollGate && !isGeneralRoad;
-        if (!isReEntry) {
-          if (lastEndedSeg) {
-            lastEndedSeg.distM += distM;
-            lastEndedSeg.sec += sec;
-          }
-          continue;
-        }
-        exitingToll = false;
-      }
-
-      if (!inToll) {
-        inToll = true;
-        currentRoad = effectiveRoad;
-        currentOperator = stepOp;
-
-        let entryName = extractFacilityName(inst, "entry");
-        for (let back = 1; back <= 2 && !entryName && (i - back) >= 0; back++) {
-          entryName = extractFacilityName(actions[i - back]?.instruction || "", "entry");
-        }
-
-        items.push({
-          kind: "node",
-          type: "entry",
-          badgeText: "入口",
-          name: entryName || (effectiveRoad ? `${effectiveRoad} 入口` : "有料区間入口")
-        });
-        startNewSegment(effectiveRoad, stepOp);
-        currentSeg.distM += distM;
-        currentSeg.sec += sec;
-        continue;
-      }
-
-      const nextInst = (i + 1 < actions.length) ? (actions[i + 1]?.instruction || "").replace(/\n+/g, " ").trim() : "";
-      const nextIsToll = /有料|高速|自動車道/.test(nextInst) || Boolean(extractDrivingRoad(nextInst));
-      const isOperatorSwitch = currentOperator && stepOp && currentOperator !== stepOp;
-      const isHighwayTransferExit = isExitAction && nextIsToll && !isGeneralRoad;
-
-      if (isOperatorSwitch || isHighwayTransferExit || (isTollGate && !isExitAction)) {
-        let pointName = extractFacilityName(inst, "switch")
-          || (nextInst ? extractFacilityName(nextInst, "switch") : null)
-          || (i > 0 ? extractFacilityName(actions[i - 1]?.instruction || "", "switch") : null);
-
-        const nextRoad = extractDrivingRoad(nextInst) || effectiveRoad;
-        const nextOp = detectTollOperator(nextRoad) || stepOp;
-        const opChanged = currentOperator && nextOp && currentOperator !== nextOp;
-
-        const opTransition = opChanged
-          ? `${OPERATOR_LABELS[currentOperator] || "高速"} ➔ ${OPERATOR_LABELS[nextOp] || "高速"}`
-          : "料金所通過";
-        const switchLabel = pointName ? `${pointName}（${opTransition}）` : opTransition;
-
-        items.push({
-          kind: "node",
-          type: "switch",
-          badgeText: "切替",
-          name: switchLabel
-        });
-
-        currentOperator = nextOp;
-        currentRoad = nextRoad;
-        startNewSegment(nextRoad, nextOp);
-        currentSeg.distM += distM;
-        currentSeg.sec += sec;
-        continue;
-      }
-
-      if (effectiveRoad) {
-        currentRoad = effectiveRoad;
-        addRoadToCurrentSeg(effectiveRoad);
-      }
-      if (currentSeg) {
-        currentSeg.distM += distM;
-        currentSeg.sec += sec;
-      }
-
-      if (isExitAction) {
-        let exitName = extractFacilityName(inst, "exit") || (nextInst ? extractFacilityName(nextInst, "exit") : null);
-        items.push({
-          kind: "node",
-          type: "exit",
-          badgeText: "出口",
-          name: exitName || (effectiveRoad ? `${effectiveRoad} 出口` : "有料区間出口")
-        });
-        lastEndedSeg = currentSeg;
-        currentSeg = null;
-        inToll = false;
-        exitingToll = true;
-        currentOperator = null;
-        currentRoad = "";
-      }
-    }
-
-    // actionsから有料区間が取れなかったが、料金・tollRoadスパンが存在する場合のフォールバック
-    if (segments.length === 0 && (totalBaseToll > 0 || hasTollSpans)) {
-      const sum = section.summary || {};
-      items.push({ kind: "node", type: "entry", badgeText: "入口", name: "有料道路入口" });
-      startNewSegment("有料道路区間", "nexco");
-      currentSeg.distM = sum.length || 0;
-      currentSeg.sec = sum.duration || 0;
-      items.push({ kind: "node", type: "exit", badgeText: "出口", name: "有料道路出口" });
-    }
+    });
   }
 
-  allocateSegmentTolls(segments, totalBaseToll);
+  allocateSegmentTolls(segments, totalLegToll);
 
-  let discountSummary = { totalBase: totalBaseToll, totalDiscounted: totalBaseToll, totalSavings: 0, appliedLabels: [], notes: [] };
-  if (typeof applyDiscountsToSegments === "function" && segments.length > 0) {
-    discountSummary = applyDiscountsToSegments(segments, vehicleClass, baseStartDate);
-  }
-
-  return { items, segments, discountSummary };
-}
-
-function buildTimelineHtml(items) {
-  if (!items || items.length === 0) {
-    return `<div class="hw-empty">有料区間のIC情報は検出されませんでした。</div>`;
-  }
-
-  const html = items.map(item => {
-    if (item.kind === "node") {
-      return `
-        <div class="hw-node ${item.type}">
-          <span class="hw-node-dot"></span>
-          <span class="hw-badge ${item.type}">${item.badgeText}</span><b>${escapeHtml(item.name)}</b>
-        </div>
-      `;
+  let discountedLegTotal = 0;
+  segments.forEach(seg => {
+    const segTime = new Date((legStartTimeObj ? legStartTimeObj.getTime() : Date.now()) + (seg.startOffsetSec || 0) * 1000);
+    seg.startTimeFormatted = typeof formatHHMM === "function" ? formatHHMM(segTime) : "";
+    if (typeof window.dynamicRulesEngine !== "undefined" && window.dynamicRulesEngine.evaluateDiscountForSegment) {
+      const evalRes = window.dynamicRulesEngine.evaluateDiscountForSegment({
+        baseToll: seg.toll,
+        dateObj: segTime,
+        operator: seg.operator,
+        vehicleClass: vehicleClass || "standard"
+      });
+      seg.discountedToll = evalRes.finalToll;
+      seg.discountAmount = evalRes.discountAmount;
+      seg.discountLabel = evalRes.appliedLabel;
+      seg.discountNote = evalRes.note;
     } else {
-      const roadLabel = item.roads.length > 0 ? item.roads.join(" ➔ ") : "有料道路区間";
-      const km = (item.distM / 1000).toFixed(1);
-      const min = Math.max(1, Math.round(item.sec / 60));
-      const hasDiscount = item.discountSavings > 0;
-      const tollTag = hasDiscount ? "割引後ETC" : (item.isEstimated ? "ETC目安" : "ETC");
-      const displayToll = hasDiscount ? item.discountedToll : item.toll;
-      const origHtml = hasDiscount
-        ? `<div class="hw-seg-toll-orig">通常 ${item.baseToll.toLocaleString()}円</div>`
-        : "";
-      return `
-        <div class="hw-seg-box">
-          <div class="hw-seg-info">
-            <div class="hw-seg-road">${escapeHtml(roadLabel)}</div>
-            <div class="hw-seg-meta">${km} km ／ 約${min}分${hasDiscount ? ` ／ <span class="disc-inline">${escapeHtml(item.discountLabel)}</span>` : ""}</div>
-          </div>
-          <div class="hw-seg-toll ${hasDiscount ? 'discounted' : ''}">
-            <span class="hw-seg-toll-tag">${tollTag}</span>
-            <span class="hw-seg-toll-val">${displayToll.toLocaleString()}円</span>
-            ${origHtml}
-          </div>
-        </div>
-      `;
+      seg.discountedToll = seg.toll;
+      seg.discountAmount = 0;
+      seg.discountLabel = "通常ETC料金";
+      seg.discountNote = "";
     }
-  }).join('');
+    discountedLegTotal += seg.discountedToll;
+  });
 
-  return `<div class="hw-timeline">${html}</div>`;
-}
-
-function toggleHwDetailBody() {
-  const body = document.getElementById('hwDetailBody');
-  const toggle = document.getElementById('hwDetailToggleText');
-  const isHidden = body.style.display === 'none';
-  body.style.display = isHidden ? 'block' : 'none';
-  toggle.innerText = isHidden ? '▲ 閉じる' : '▼ 開く';
-}
-
-function switchHwDetailTab(tab) {
-  const body = document.getElementById('hwDetailBody');
-  const hasMix = latestMixDetailHtml !== "";
-  if (!hasMix) {
-    body.innerHTML = latestHwDetailHtml;
-    return;
-  }
-  body.innerHTML = `
-    <div class="hw-tabs">
-      <button type="button" class="hw-tab-btn ${tab === 'mix' ? 'active mix-tab' : ''}" onclick="switchHwDetailTab('mix')">ミックスルート詳細</button>
-      <button type="button" class="hw-tab-btn ${tab === 'hw' ? 'active' : ''}" onclick="switchHwDetailTab('hw')">全高速ルート詳細</button>
-    </div>
-    <div>${tab === 'mix' ? latestMixDetailHtml : latestHwDetailHtml}</div>
-  `;
-}
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    extractHighwayTimelineFromHere,
-    allocateSegmentTolls,
-    detectTollOperator,
-    normalizeRoadName
+  return {
+    segments,
+    baseTotalToll: totalLegToll,
+    discountedTotalToll: discountedLegTotal
   };
 }
-1 / 2 ページ
+
+function buildHighwayDetailHtml(titleText, legEntries, vehicleClass) {
+  if (!legEntries || legEntries.length === 0) {
+    return `<div class="hw-empty">有料区間データは検出されませんでした。</div>`;
+  }
+
+  let html = `<div class="hw-detail-wrap"><div class="hw-detail-title">${escapeHtml(titleText)}</div>`;
+  let grandBase = 0;
+  let grandDiscounted = 0;
+
+  legEntries.forEach((entry, idx) => {
+    const parsed = parseHighwaySegmentsFromHere(entry.res, entry.startDt, entry.fromLabel, entry.toLabel, vehicleClass);
+    grandBase += parsed.baseTotalToll;
+    grandDiscounted += parsed.discountedTotalToll;
+
+    html += `<div class="hw-leg-block">`;
+    html += `<div class="hw-leg-head">区間${idx + 1}：${escapeHtml(entry.fromLabel)} ➔ ${escapeHtml(entry.toLabel)}（標準ETC ¥${parsed.baseTotalToll.toLocaleString()} / 割引判定後 ¥${parsed.discountedTotalToll.toLocaleString()}）</div>`;
+
+    if (parsed.segments.length === 0) {
+      html += `<div class="hw-seg-none">この区間に有料高速区間はありません</div>`;
+    } else {
+      parsed.segments.forEach(seg => {
+        const estTag = seg.isEstimated ? ` <span class="hw-est-badge">区間按分目安</span>` : ``;
+        const discBadge = seg.discountAmount > 0
+          ? `<span class="hw-disc-badge">✅ ${escapeHtml(seg.discountLabel)} (-¥${seg.discountAmount.toLocaleString()})</span>`
+          : `<span class="hw-norm-badge">${escapeHtml(seg.discountLabel)}${seg.discountNote ? `（${escapeHtml(seg.discountNote)}）` : ""}</span>`;
+
+        html += `
+          <div class="hw-seg-card">
+            <div class="hw-seg-top">
+              <strong>${escapeHtml(seg.road)}</strong>
+              <span>${seg.startTimeFormatted ? `${seg.startTimeFormatted}頃〜` : ""}</span>
+            </div>
+            <div class="hw-seg-ic">${escapeHtml(seg.entryIc)} ➔ ${escapeHtml(seg.exitIc)}</div>
+            <div class="hw-seg-price">
+              <span>標準: <strong>¥${seg.toll.toLocaleString()}</strong>${estTag}</span>
+              <span>判定後: <strong style="color:var(--orange-dark);">¥${seg.discountedToll.toLocaleString()}</strong></span>
+            </div>
+            <div class="hw-seg-disc">${discBadge}</div>
+          </div>
+        `;
+      });
+    }
+    html += `</div>`;
+  });
+
+  const totalSaved = Math.max(0, grandBase - grandDiscounted);
+  html += `
+    <div class="hw-summary-bar">
+      <span>合計 標準ETC: <strong>¥${grandBase.toLocaleString()}</strong></span>
+      <span>割引判定後: <strong style="color:var(--green);">¥${grandDiscounted.toLocaleString()}</strong>${totalSaved > 0 ? `（-¥${totalSaved.toLocaleString()}）` : ""}</span>
+    </div>
+  </div>`;
+
+  return html;
+}
