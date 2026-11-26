@@ -391,12 +391,12 @@ button:disabled {
 
 @media (min-width: 600px) {
   #resultsArea {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
   }
 
   #resultsArea > #roiCard,
   #resultsArea > #mapCard {
-    grid-column: 1 / -1;
+    grid-column: 1 / -1 !important;
   }
 }
 
