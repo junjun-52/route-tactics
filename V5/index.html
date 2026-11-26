@@ -1,0 +1,224 @@
+
+index.html
+100%
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ROUTE TACTICS V5">
+<title>ROUTE TACTICS V5 | ルート・タクティクス</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script>
+  (function() {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'style.css?v=' + Date.now();
+    document.head.appendChild(link);
+  })();
+</script>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="header-inner">
+    <div>
+      <h1 class="brand-title"><span class="brand-accent"></span>ROUTE TACTICS <span class="ver-badge">V5</span></h1>
+      <div class="brand-sub">HERE ROUTING × 動的ETC割引判定｜TIME × TOLL OPTIMIZER</div>
+    </div>
+    <div class="user-box">
+      <div class="user-badge" id="currentUserBadge">👤 デフォルト</div>
+      <button type="button" class="btn-user-switch" onclick="openProfileModal()">切替</button>
+      <button type="button" class="btn-settings" onclick="openApiModal()">⚙️</button>
+    </div>
+  </div>
+</header>
+
+<!-- プロフィール切替モーダル -->
+<div class="modal-overlay" id="profileModal">
+  <div class="modal-card">
+    <div class="sec-head" style="margin-bottom:10px;">
+      <div><span class="sec-title-en">LOCAL PROFILE</span><span class="sec-title-jp">表示名・車両プリセット切替</span></div>
+    </div>
+
+    <div class="privacy-note">
+      🔒 入力した名前や自宅住所は外部サーバーへ一切送信されず、<strong>このスマホのブラウザ内だけ</strong>に安全に保存されます。
+    </div>
+
+    <div id="savedProfilesArea" style="display:none;">
+      <label>この端末に保存済みのプロフィール（タップで切替）</label>
+      <div class="user-list-chips" id="savedProfileChips"></div>
+    </div>
+
+    <label>新しい表示名（または車両名）を追加</label>
+    <input type="text" id="newProfileName" placeholder="例：マイカー、仕事用、家族用など">
+
+    <div id="profileErrorMsg" style="font-size:12px; color:#d93025; font-weight:700; margin-bottom:8px; min-height:16px;"></div>
+
+    <button type="button" class="btn-calc" onclick="createAndSwitchProfile()" style="padding:11px; font-size:13px;">この名前でプロフィール作成・切替</button>
+    <button type="button" class="btn-sub" onclick="deleteCurrentProfile()" id="btnDeleteProfile" style="margin-top:8px; color:#d93025; display:none;">現在のプロフィールを端末から削除</button>
+    <button type="button" class="btn-sub" onclick="closeProfileModal()" style="margin-top:6px; margin-bottom:0;">閉じる</button>
+  </div>
+</div>
+
+<!-- HERE API・動的ルール設定モーダル -->
+<div class="modal-overlay" id="apiModal">
+  <div class="modal-card">
+    <div class="sec-head" style="margin-bottom:10px;">
+      <div><span class="sec-title-en">HERE API &amp; DYNAMIC RULES</span><span class="sec-title-jp">API・動的ルール設定</span></div>
+    </div>
+
+    <label>HERE API Key（端末内の localStorage にのみ保存）</label>
+    <input type="password" id="hereApiKeyInput" placeholder="HERE Platform で取得した API Key を入力">
+
+    <label>動的ETC割引ルールJSON URL（空欄時は ./rules/etc_rules.json）</label>
+    <input type="url" id="customRulesUrlInput" placeholder="https://.../etc_rules.json（任意）">
+
+    <div class="privacy-note" id="rulesModalDetail" style="margin-bottom:10px;"></div>
+
+    <button type="button" class="btn-calc" onclick="saveApiAndRulesSettings()" style="padding:11px; font-size:13px;">保存してルールを再読込</button>
+    <button type="button" class="btn-sub" onclick="closeApiModal()" style="margin-top:6px; margin-bottom:0;">閉じる</button>
+  </div>
+</div>
+
+<div class="container">
+
+  <div class="status-bar">
+    <div id="apiStatusBadge" class="api-badge warn" onclick="openApiModal()">⚠️ HERE APIキー未設定</div>
+    <div id="rulesStatusBadge" class="rules-badge ok" onclick="openApiModal()">📋 動的割引ルール読込中...</div>
+  </div>
+
+  <div class="panel">
+    <div class="sec-head">
+      <div><span class="sec-title-en">01 / VEHICLE &amp; PLACES</span><span class="sec-title-jp">車両区分・燃費・登録地設定</span></div>
+    </div>
+    <div class="row">
+      <div>
+        <label>ETC車種区分</label>
+        <select id="vehicleClass">
+          <option value="kei">軽自動車・二輪</option>
+          <option value="standard" selected>普通車</option>
+          <option value="medium">中型車</option>
+          <option value="large">大型車</option>
+          <option value="extra_large">特大車</option>
+        </select>
+      </div>
+      <div>
+        <label>燃費 (km/L)</label>
+        <input type="number" id="fuelEfficiency" step="0.1" value="15.0">
+      </div>
+      <div>
+        <label>ガソリン (円/L)</label>
+        <input type="number" id="gasPrice" value="160">
+      </div>
+    </div>
+
+    <button type="button" class="btn-sub" onclick="togglePlacesEditor()">📍 自宅（ホーム）・登録地（5ヶ所）を編集する</button>
+    <div id="placesEditor" class="places-editor">
+      <label style="color:var(--orange-dark);">🏠 自宅・ホーム地点（※この端末内のみに保存）</label>
+      <input type="text" id="homePlaceInput" placeholder="例：自宅の住所、最寄り駅など" style="margin-bottom:10px;">
+
+      <label style="color:var(--navy);">⭐ 登録地 1〜5（左：ボタン表示名 ／ 右：検索する施設名・住所）</label>
+      <div class="place-edit-row">
+        <input type="text" class="slot-name" id="placeName0" placeholder="表示名1">
+        <input type="text" class="slot-addr" id="placeAddr0" placeholder="施設名・住所1">
+      </div>
+      <div class="place-edit-row">
+        <input type="text" class="slot-name" id="placeName1" placeholder="表示名2">
+        <input type="text" class="slot-addr" id="placeAddr1" placeholder="施設名・住所2">
+      </div>
+      <div class="place-edit-row">
+        <input type="text" class="slot-name" id="placeName2" placeholder="表示名3">
+        <input type="text" class="slot-addr" id="placeAddr2" placeholder="施設名・住所3">
+      </div>
+      <div class="place-edit-row">
+        <input type="text" class="slot-name" id="placeName3" placeholder="表示名4">
+        <input type="text" class="slot-addr" id="placeAddr3" placeholder="施設名・住所4">
+      </div>
+      <div class="place-edit-row" style="margin-bottom:0;">
+        <input type="text" class="slot-name" id="placeName4" placeholder="表示名5">
+        <input type="text" class="slot-addr" id="placeAddr4" placeholder="施設名・住所5">
+      </div>
+    </div>
+
+    <button class="btn-save" onclick="saveUserSettings()">このスマホ内に設定（車種・燃費・自宅・登録地）を保存</button>
+    <div id="saveStatus" class="status"></div>
+  </div>
+
+  <div class="panel">
+    <div class="sec-head">
+      <div><span class="sec-title-en">02 / SCHEDULE &amp; TOLL SOURCE</span><span class="sec-title-jp">日時・動的割引判定設定</span></div>
+      <button type="button" class="btn-now" onclick="setNowDateTime()">現在日時</button>
+    </div>
+    <select id="timeMode" onchange="updateSourceBadge()">
+      <option value="departure">出発時間で指定する</option>
+      <option value="arrival">到着時間で指定する</option>
+    </select>
+    <div class="row">
+      <div>
+        <label>走行日</label>
+        <input type="date" id="travelDate" onchange="updateSourceBadge()">
+      </div>
+      <div>
+        <label>時刻</label>
+        <input type="time" id="travelTime" onchange="updateSourceBadge()">
+      </div>
+    </div>
+    <div id="sourceInfoBadge" class="info-badge"></div>
+  </div>
+
+  <div class="panel">
+    <div class="sec-head">
+      <div><span class="sec-title-en">03 / ROUTE TACTICS</span><span class="sec-title-jp">ルート戦略比較</span></div>
+    </div>
+
+    <label>出発地（ボタンでワンタップ入力）</label>
+    <div class="quick-chips" id="originChips"></div>
+    <input type="text" id="origin" placeholder="出発地を入力（または上のボタンを選択）" value="">
+
+    <button type="button" class="btn-sub" id="btnAddWaypoint" onclick="addWaypoint()">＋ 経由地・乗降ICを追加（残り5ヶ所）</button>
+    <div id="waypointsContainer"></div>
+
+    <label>目的地（ボタンでワンタップ入力）</label>
+    <div class="quick-chips" id="destChips"></div>
+    <input type="text" id="destination" placeholder="目的地を入力（施設名・住所・駅名など）" value="">
+
+    <button class="btn-calc" onclick="calculateAll()">HERE API ＋ 動的割引で比較を実行</button>
+
+    <div id="resultArea" style="display:none;">
+      <div id="diffBanner" class="diff-banner"></div>
+      <div class="compare-grid" id="compareGrid"></div>
+
+      <div id="hwDetailWrap" class="hw-detail-wrap" style="display:none;">
+        <div class="hw-detail-header" onclick="toggleHwDetailBody()">
+          <span class="hw-detail-title">🛣️ 有料区間詳細（乗降IC・動的割引内訳）</span>
+          <span class="hw-detail-toggle" id="hwDetailToggleText">▲ 閉じる</span>
+        </div>
+        <div class="hw-detail-body" id="hwDetailBody"></div>
+      </div>
+    </div>
+
+    <div id="map"></div>
+
+    <div id="navButtons" style="display:none; margin-top:10px;"></div>
+  </div>
+
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  (function() {
+    const v = Date.now();
+    ['flexpolyline.js', 'rules.js', 'here_api.js', 'profile.js', 'weather.js', 'highway.js', 'app.js'].forEach(file => {
+      const s = document.createElement('script');
+      s.src = file + '?v=' + v;
+      s.async = false;
+      document.body.appendChild(s);
+    });
+  })();
+</script>
+</body>
+</html>
+index.html を表示しています。
