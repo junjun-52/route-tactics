@@ -1,4 +1,3 @@
-
 // ===== メイン制御・HEREルート検索・動的割引＆ROI算出・Leaflet地図描画 (V5) =====
 const MAX_WAYPOINTS = 5;
 
@@ -19,7 +18,6 @@ function escapeHtml(str) {
     .replace(/'/g, "&#39;");
 }
 
-// ===== 経由地（MAX 5ヶ所）UI管理 =====
 function addWaypoint() {
   if (waypoints.length >= MAX_WAYPOINTS) return;
   waypoints.push({ name: "", modeAfter: "local" });
@@ -83,7 +81,6 @@ function renderWaypoints() {
     : `経由地は最大${MAX_WAYPOINTS}ヶ所までです`;
 }
 
-// ===== 位置情報・日時・座標ヘルパー =====
 function setLocationToField(fieldId) {
   if (!navigator.geolocation) {
     alert("お使いのブラウザは位置情報に対応していません");
@@ -201,510 +198,287 @@ function calcStartEndTime(baseDt, mode, durationSec) {
   }
 }
 
-// ===== 高速の費用対効果（下道比・時間コスパ）HTML生成 =====
-function buildRoiRowsHtml(routeTotal, routeSec, loTotal, loSec, isBaseLocal) {
-  if (isBaseLocal) {
-    return `
-      <div class="metric-row roi-row"><span>下道比</span><b>基準ルート</b></div>
-      <div class="metric-row roi-row"><span>時間コスパ</span><b class="roi-good">コスト最安</b></div>
-    `;
-  }
-
+function buildRoiRowsHtml(routeTotal, routeSec, loTotal, loSec, labelPrefix) {
+  const extraCost = Math.round(routeTotal - loTotal);
   const savedMin = Math.round((loSec - routeSec) / 60);
-  const extraCost = routeTotal - loTotal;
 
   if (savedMin > 0 && extraCost > 0) {
-    const perHourCost = Math.round((extraCost / savedMin) * 60);
-    const rateClass = perHourCost <= 2500 ? 'roi-good' : (perHourCost <= 4000 ? 'roi-warn' : 'roi-bad');
+    const perHour = Math.round((extraCost / savedMin) * 60);
+    const perMin = (extraCost / savedMin).toFixed(1);
     return `
-      <div class="metric-row roi-row">
-        <span>下道比</span>
-        <b>-${formatShortDurationFromMin(savedMin)} (+${extraCost.toLocaleString()}円)</b>
-      </div>
-      <div class="metric-row roi-row">
-        <span>時間コスパ</span>
-        <b class="${rateClass}">${perHourCost.toLocaleString()}円 / 1h短縮</b>
-      </div>
+      <div class="roi-row"><span>${escapeHtml(labelPrefix)}追加コスト（差額）</span><strong>+¥${extraCost.toLocaleString()}</strong></div>
+      <div class="roi-row"><span>短縮できる時間</span><strong>${formatShortDurationFromMin(savedMin)}短縮</strong></div>
+      <div class="roi-row"><span>1時間短縮あたりのコスト</span><strong class="roi-highlight">¥${perHour.toLocaleString()} / 時間（約¥${perMin}/分）</strong></div>
+    `;
+  } else if (savedMin > 0 && extraCost <= 0) {
+    return `
+      <div class="roi-row"><span>${escapeHtml(labelPrefix)}差額</span><strong class="roi-good">¥${extraCost.toLocaleString()}（追加費用なし！）</strong></div>
+      <div class="roi-row"><span>短縮できる時間</span><strong class="roi-good">${formatShortDurationFromMin(savedMin)}短縮</strong></div>
+      <div class="roi-row"><span>結論</span><strong class="roi-good">安くて速いベスト選択です</strong></div>
+    `;
+  } else if (savedMin <= 0 && extraCost > 0) {
+    return `
+      <div class="roi-row"><span>${escapeHtml(labelPrefix)}追加コスト</span><strong>+¥${extraCost.toLocaleString()}</strong></div>
+      <div class="roi-row"><span>時間差</span><strong>${formatShortDurationFromMin(Math.abs(savedMin))}遅い</strong></div>
+      <div class="roi-row"><span>結論</span><strong class="roi-warn">今回は時間・料金ともに下道有利です</strong></div>
+    `;
+  } else {
+    return `
+      <div class="roi-row"><span>${escapeHtml(labelPrefix)}差額</span><strong>¥${extraCost.toLocaleString()}</strong></div>
+      <div class="roi-row"><span>時間差</span><strong>ほぼ同等</strong></div>
     `;
   }
-
-  if (savedMin > 0 && extraCost <= 0) {
-    return `
-      <div class="metric-row roi-row">
-        <span>下道比</span>
-        <b class="roi-good">-${formatShortDurationFromMin(savedMin)} (${extraCost.toLocaleString()}円)</b>
-      </div>
-      <div class="metric-row roi-row">
-        <span>時間コスパ</span>
-        <b class="roi-good">時間・費用とも有利</b>
-      </div>
-    `;
-  }
-
-  const costText = extraCost >= 0 ? `+${extraCost.toLocaleString()}円` : `${extraCost.toLocaleString()}円`;
-  return `
-    <div class="metric-row roi-row">
-      <span>下道比</span>
-      <b class="roi-bad">短縮なし (${costText})</b>
-    </div>
-    <div class="metric-row roi-row">
-      <span>時間コスパ</span>
-      <b class="roi-bad">効果薄（下道推奨）</b>
-    </div>
-  `;
 }
 
-function buildDiscountHtml(discountSummary, baseToll) {
-  if (!baseToll || baseToll <= 0) return '';
-  if (discountSummary.totalSavings > 0) {
-    const labels = discountSummary.appliedLabels.map(l => escapeHtml(l)).join(' / ');
-    return `
-      <div class="discount-pill ok">
-        🏷️ ${labels}（-${discountSummary.totalSavings.toLocaleString()}円）
-      </div>
-    `;
+function renderLeafletMap(routeCoords, localCoords) {
+  const mapCard = document.getElementById('mapCard');
+  if (!mapCard || typeof L === 'undefined') return;
+  mapCard.style.display = 'block';
+
+  if (!leafletMapInstance) {
+    leafletMapInstance = L.map('mapCanvas');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 18
+    }).addTo(leafletMapInstance);
   }
-  const excludeNote = discountSummary.notes.find(n => n.includes('除外') || n.includes('対象外'));
-  if (excludeNote) {
-    return `<div class="discount-pill warn">${escapeHtml(excludeNote)}</div>`;
+
+  leafletMapInstance.eachLayer((layer) => {
+    if (layer instanceof L.Polyline) {
+      leafletMapInstance.removeLayer(layer);
+    }
+  });
+
+  const boundsPoints = [];
+  if (Array.isArray(localCoords) && localCoords.length > 0) {
+    const localLine = L.polyline(localCoords, { color: '#1e7e48', weight: 4, opacity: 0.7, dashArray: '6,6' }).addTo(leafletMapInstance);
+    boundsPoints.push(...localLine.getLatLngs());
   }
-  return '';
+  if (Array.isArray(routeCoords) && routeCoords.length > 0) {
+    const mainLine = L.polyline(routeCoords, { color: '#f36c21', weight: 5, opacity: 0.9 }).addTo(leafletMapInstance);
+    boundsPoints.push(...mainLine.getLatLngs());
+  }
+
+  if (boundsPoints.length > 0) {
+    leafletMapInstance.fitBounds(L.latLngBounds(boundsPoints), { padding: [24, 24] });
+  }
+  setTimeout(() => {
+    if (leafletMapInstance) leafletMapInstance.invalidateSize();
+  }, 150);
 }
 
-// ===== 比較実行 =====
-async function calculateAll() {
-  const settings = getV5Settings();
-  const apiKey = (settings.hereApiKey || '').trim();
+async function calculateRoutes() {
+  saveCurrentProfileData();
+  const v5Settings = getV5Settings();
+  const apiKey = v5Settings.hereApiKey ? v5Settings.hereApiKey.trim() : "";
   if (!apiKey) {
-    alert('HERE APIキーが未設定です。右上の「API・ルール設定」からHERE APIキーを入力してください。');
+    alert("HERE APIキーが設定されていません。画面右上の「⚙️」からHERE APIキーを入力してください。");
     openApiModal();
     return;
   }
 
-  let origin = document.getElementById('origin').value.trim();
-  const dest = document.getElementById('destination').value.trim();
-  const eff = parseFloat(document.getElementById('fuelEfficiency').value) || 15;
-  const gas = parseFloat(document.getElementById('gasPrice').value) || 160;
-  const vehicleClass = document.getElementById('vehicleClass')?.value || 'standard';
-  const timeMode = document.getElementById('timeMode').value;
-  const baseDt = getSelectedDateTime();
-
-  if (!origin || !dest) return alert('出発地と目的地を入力してください');
-
-  if (origin === '現在地' && navigator.geolocation) {
-    try {
-      const pos = await new Promise((resolve, reject) =>
-        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 })
-      );
-      const lat = pos.coords.latitude.toFixed(5);
-      const lng = pos.coords.longitude.toFixed(5);
-      origin = `📍現在地 (${lat}, ${lng})`;
-      document.getElementById('origin').value = origin;
-    } catch (e) {
-      return alert('現在地の取得に失敗しました。位置情報の許可を確認してください。');
-    }
+  const origin = document.getElementById('originInput').value.trim();
+  const dest = document.getElementById('destInput').value.trim();
+  if (!origin || !dest) {
+    alert("出発地と目的地の両方を入力してください。");
+    return;
   }
+
+  const fuelEff = Math.max(1, parseFloat(document.getElementById('fuelEfficiency').value) || 15.0);
+  const gasPrice = Math.max(1, parseFloat(document.getElementById('gasPrice').value) || 160);
+  const vehicleClass = document.getElementById('vehicleClass').value || "standard";
+  const baseDt = getSelectedDateTime();
+  const timeMode = document.getElementById('timeMode').value || "departure";
 
   currentOrigin = origin;
   currentDest = dest;
-  currentMixLegs = [];
 
-  const validWps = waypoints
-    .map(w => ({ name: w.name.trim(), modeAfter: w.modeAfter }))
-    .filter(w => w.name !== "");
+  const btn = document.getElementById('btnCalc');
+  btn.disabled = true;
+  btn.innerText = "⏳ HERE APIでルート・割引判定を計算中...";
 
-  const resultArea = document.getElementById('resultArea');
-  const compareGrid = document.getElementById('compareGrid');
-  const diffBanner = document.getElementById('diffBanner');
-  const navButtons = document.getElementById('navButtons');
-  const hwDetailWrap = document.getElementById('hwDetailWrap');
-
-  resultArea.style.display = 'block';
-  diffBanner.innerHTML = 'HERE API からルート・標準ETC料金を取得し、動的割引ルールを計算中...';
-  compareGrid.innerHTML = '';
-  navButtons.style.display = 'none';
-  hwDetailWrap.style.display = 'none';
-
-  let hwRes, localRes;
   try {
-    [hwRes, localRes] = await Promise.all([
-      fetchHereRoute(origin, dest, { apiKey, avoidTolls: false, vehicleClass, timeMode, targetDate: baseDt }),
-      fetchHereRoute(origin, dest, { apiKey, avoidTolls: true, vehicleClass, timeMode, targetDate: baseDt })
-    ]);
+    const cleanWps = waypoints.filter(w => w.name && w.name.trim()).map(w => ({
+      name: w.name.trim(),
+      modeAfter: w.modeAfter || "local"
+    }));
+
+    const points = [origin, ...cleanWps.map(w => w.name), dest];
+    const legModes = [];
+    if (cleanWps.length === 0) {
+      legModes.push(false);
+    } else {
+      legModes.push(firstSegmentMode === "local");
+      for (let i = 0; i < cleanWps.length; i++) {
+        legModes.push(cleanWps[i].modeAfter === "local");
+      }
+    }
+
+    const hwLegs = [];
+    const localLegs = [];
+    let hwDist = 0, hwSec = 0, hwBaseToll = 0, hwDiscToll = 0;
+    let loDist = 0, loSec = 0;
+    const hwCoords = [];
+    const loCoords = [];
+    const hwDetailEntries = [];
+
+    let cursorTime = new Date(baseDt.getTime());
+
+    for (let i = 0; i < points.length - 1; i++) {
+      const fromPt = points[i];
+      const toPt = points[i + 1];
+
+      const [resHw, resLo] = await Promise.all([
+        window.hereApi.fetchHereRoute(fromPt, toPt, { apiKey, avoidTolls: false, baseDt: cursorTime, mode: timeMode }),
+        window.hereApi.fetchHereRoute(fromPt, toPt, { apiKey, avoidTolls: true, baseDt: cursorTime, mode: timeMode })
+      ]);
+
+      const parsedHw = parseHighwaySegmentsFromHere(resHw, cursorTime, formatDisplayOrigin(fromPt), formatDisplayOrigin(toPt), vehicleClass);
+      hwDist += resHw.distanceKm;
+      hwSec += resHw.durationSec;
+      hwBaseToll += parsedHw.baseTotalToll;
+      hwDiscToll += parsedHw.discountedTotalToll;
+      hwCoords.push(...resHw.coords);
+
+      hwDetailEntries.push({
+        res: resHw,
+        startDt: new Date(cursorTime.getTime()),
+        fromLabel: formatDisplayOrigin(fromPt),
+        toLabel: formatDisplayOrigin(toPt)
+      });
+
+      loDist += resLo.distanceKm;
+      loSec += resLo.durationSec;
+      loCoords.push(...resLo.coords);
+
+      const avoidTollForMix = legModes[i] === true;
+      const chosenRes = avoidTollForMix ? resLo : resHw;
+      const chosenParsed = avoidTollForMix ? { baseTotalToll: 0, discountedTotalToll: 0 } : parsedHw;
+
+      hwLegs.push({
+        from: formatDisplayOrigin(fromPt),
+        to: formatDisplayOrigin(toPt),
+        avoidTolls: avoidTollForMix,
+        res: chosenRes,
+        parsed: chosenParsed,
+        startDt: new Date(cursorTime.getTime())
+      });
+
+      localLegs.push({ from: fromPt, to: toPt, avoidTolls: true });
+      cursorTime = new Date(cursorTime.getTime() + chosenRes.durationSec * 1000);
+    }
+
+    currentMixLegs = localLegs;
+
+    let mixDist = 0, mixSec = 0, mixBaseToll = 0, mixDiscToll = 0;
+    const mixDetailEntries = [];
+    hwLegs.forEach(item => {
+      mixDist += item.res.distanceKm;
+      mixSec += item.res.durationSec;
+      mixBaseToll += item.parsed.baseTotalToll;
+      mixDiscToll += item.parsed.discountedTotalToll;
+      if (!item.avoidTolls) {
+        mixDetailEntries.push({
+          res: item.res,
+          startDt: item.startDt,
+          fromLabel: item.from,
+          toLabel: item.to
+        });
+      }
+    });
+
+    const hwFuel = Math.round((hwDist / fuelEff) * gasPrice);
+    const mixFuel = Math.round((mixDist / fuelEff) * gasPrice);
+    const loFuel = Math.round((loDist / fuelEff) * gasPrice);
+
+    const hwTotal = hwFuel + hwDiscToll;
+    const mixTotal = mixFuel + mixDiscToll;
+    const loTotal = loFuel;
+
+    const hwTimeInfo = calcStartEndTime(baseDt, timeMode, hwSec);
+    const mixTimeInfo = calcStartEndTime(baseDt, timeMode, mixSec);
+    const loTimeInfo = calcStartEndTime(baseDt, timeMode, loSec);
+
+    document.getElementById('hwTimeRange').innerText = hwTimeInfo.text;
+    document.getElementById('hwTotal').innerText = `¥${hwTotal.toLocaleString()}`;
+    document.getElementById('hwBreakdown').innerText = `ガソリン約¥${hwFuel.toLocaleString()} + ETC判定後¥${hwDiscToll.toLocaleString()}（標準¥${hwBaseToll.toLocaleString()}）`;
+    document.getElementById('hwMeta').innerText = `約${hwDist.toFixed(1)}km / ${formatDuration(hwSec)}`;
+
+    document.getElementById('mixTimeRange').innerText = mixTimeInfo.text;
+    document.getElementById('mixTotal').innerText = `¥${mixTotal.toLocaleString()}`;
+    document.getElementById('mixBreakdown').innerText = `ガソリン約¥${mixFuel.toLocaleString()} + ETC判定後¥${mixDiscToll.toLocaleString()}（標準¥${mixBaseToll.toLocaleString()}）`;
+    document.getElementById('mixMeta').innerText = `約${mixDist.toFixed(1)}km / ${formatDuration(mixSec)}`;
+
+    document.getElementById('loTimeRange').innerText = loTimeInfo.text;
+    document.getElementById('loTotal').innerText = `¥${loTotal.toLocaleString()}`;
+    document.getElementById('loBreakdown').innerText = `ガソリン約¥${loFuel.toLocaleString()} + 高速代¥0`;
+    document.getElementById('loMeta').innerText = `約${loDist.toFixed(1)}km / ${formatDuration(loSec)}`;
+
+    document.getElementById('roiCard').style.display = 'block';
+    document.getElementById('roiHighwayBox').innerHTML = buildRoiRowsHtml(hwTotal, hwSec, loTotal, loSec, "高速優先 ");
+    document.getElementById('roiMixBox').innerHTML = buildRoiRowsHtml(mixTotal, mixSec, loTotal, loSec, "経由・乗降指定 ");
+
+    latestHwDetailHtml = buildHighwayDetailHtml("高速優先ルート 区間別ETC・動的割引判定", hwDetailEntries, vehicleClass);
+    latestMixDetailHtml = buildHighwayDetailHtml("経由・乗降指定ルート 区間別ETC・動的割引判定", mixDetailEntries, vehicleClass);
+
+    document.getElementById('hwIcDetailBox').innerHTML = latestHwDetailHtml;
+    document.getElementById('mixIcDetailBox').innerHTML = latestMixDetailHtml;
+
+    const weatherEl = document.getElementById('arrivalWeatherInfo');
+    if (weatherEl && typeof fetchArrivalWeather === 'function') {
+      const lastRes = hwLegs[hwLegs.length - 1]?.res;
+      const destLat = lastRes?.destResolved?.lat;
+      const destLng = lastRes?.destResolved?.lng;
+      const wInfo = await fetchArrivalWeather(destLat, destLng, hwTimeInfo.end);
+      weatherEl.innerText = wInfo ? `到着時天気（${wInfo.timeLabel}）: ${wInfo.label}` : '';
+    }
+
+    renderLeafletMap(hwCoords, loCoords);
+    document.getElementById('resultsArea').style.display = 'block';
+    updateSourceBadge();
   } catch (err) {
-    diffBanner.innerHTML = `ルート取得エラー: ${escapeHtml(err.message)}`;
-    return;
-  }
-
-  // 目的地の緯度・経度から到着時天気予報を1回だけ取得
-  const weatherPromise = hwRes.destPos
-    ? fetchDestinationWeatherData(hwRes.destPos.lat, hwRes.destPos.lng)
-    : Promise.resolve(null);
-
-  const hwStats = aggregateHereRouteStats(hwRes.route);
-  const hwDist = hwStats.lengthM / 1000;
-  const hwSec = hwStats.durationSec;
-  const hwTimes = calcStartEndTime(baseDt, timeMode, hwSec);
-  const hwGas = Math.round((hwDist / eff) * gas);
-  const hwTollObj = extractHereTolls(hwRes.route, false);
-  const hwTimeline = extractHighwayTimelineFromHere(hwRes.route, hwTollObj.totalJpy, vehicleClass, hwTimes.start);
-  const hwEffectiveToll = hwTimeline.discountSummary.totalDiscounted;
-  const hwTotal = hwGas + hwEffectiveToll;
-
-  const loStats = aggregateHereRouteStats(localRes.route);
-  const loDist = loStats.lengthM / 1000;
-  const loSec = loStats.durationSec;
-  const loTimes = calcStartEndTime(baseDt, timeMode, loSec);
-  const loGas = Math.round((loDist / eff) * gas);
-  const loTotal = loGas;
-
-  latestHwDetailHtml = `
-    <div class="hw-leg-block">
-      <div class="hw-leg-head">${escapeHtml(formatDisplayOrigin(origin))} ➔ ${escapeHtml(dest)}</div>
-      ${buildTimelineHtml(hwTimeline.items)}
-    </div>
-  `;
-  latestMixDetailHtml = "";
-
-  // ミックスルート計算
-  let mixData = null;
-  if (validWps.length > 0) {
-    const legDefs = [];
-    legDefs.push({ from: origin, to: validWps[0].name, avoidTolls: firstSegmentMode === 'local' });
-    for (let i = 0; i < validWps.length; i++) {
-      const to = (i === validWps.length - 1) ? dest : validWps[i + 1].name;
-      legDefs.push({ from: validWps[i].name, to, avoidTolls: validWps[i].modeAfter === 'local' });
-    }
-
-    let totalDist = 0;
-    let totalSec = 0;
-    let totalBaseToll = 0;
-    let totalDiscountedToll = 0;
-    let runningDt = new Date(baseDt.getTime());
-    const polylines = [];
-    const modeLabels = [];
-    const mixLegDetailBlocks = [];
-    const mixAppliedLabels = new Set();
-    const mixNotes = new Set();
-    let allSuccess = true;
-    let hasHighwayLeg = false;
-
-    for (let i = 0; i < legDefs.length; i++) {
-      const leg = legDefs[i];
-      try {
-        const legRes = await fetchHereRoute(leg.from, leg.to, {
-          apiKey,
-          avoidTolls: leg.avoidTolls,
-          vehicleClass,
-          timeMode: 'departure',
-          targetDate: runningDt
-        });
-        const st = aggregateHereRouteStats(legRes.route);
-        const d = st.lengthM / 1000;
-        const s = st.durationSec;
-        const tObj = extractHereTolls(legRes.route, leg.avoidTolls);
-
-        let legEffToll = 0;
-        let legTimelineItems = [];
-        if (!leg.avoidTolls) {
-          hasHighwayLeg = true;
-          const tl = extractHighwayTimelineFromHere(legRes.route, tObj.totalJpy, vehicleClass, runningDt);
-          legTimelineItems = tl.items;
-          legEffToll = tl.discountSummary.totalDiscounted;
-          tl.discountSummary.appliedLabels.forEach(l => mixAppliedLabels.add(l));
-          tl.discountSummary.notes.forEach(n => mixNotes.add(n));
-        }
-
-        totalDist += d;
-        totalSec += s;
-        totalBaseToll += tObj.totalJpy;
-        totalDiscountedToll += legEffToll;
-        runningDt = new Date(runningDt.getTime() + s * 1000);
-
-        st.polylines.forEach(p => {
-          polylines.push({
-            poly: p,
-            color: leg.avoidTolls ? '#f36c21' : '#14233c'
-          });
-        });
-        modeLabels.push(leg.avoidTolls ? '下道' : '高速');
-
-        const modeTag = leg.avoidTolls ? '下道' : '高速';
-        mixLegDetailBlocks.push(`
-          <div class="hw-leg-block">
-            <div class="hw-leg-head">区間${i + 1} [${modeTag}]：${escapeHtml(formatDisplayOrigin(leg.from))} ➔ ${escapeHtml(formatDisplayOrigin(leg.to))}</div>
-            ${leg.avoidTolls
-              ? `<div class="hw-empty">一般道区間（${d.toFixed(1)}km / ${formatDuration(s)}）</div>`
-              : buildTimelineHtml(legTimelineItems)}
-          </div>
-        `);
-      } catch (e) {
-        allSuccess = false;
-        break;
-      }
-    }
-
-    if (allSuccess) {
-      currentMixLegs = legDefs;
-      latestMixDetailHtml = mixLegDetailBlocks.join('');
-      const mixTimes = calcStartEndTime(baseDt, timeMode, totalSec);
-      const totalGas = Math.round((totalDist / eff) * gas);
-      mixData = {
-        dist: totalDist,
-        sec: totalSec,
-        timeText: mixTimes.text,
-        endDate: mixTimes.end,
-        gas: totalGas,
-        baseToll: totalBaseToll,
-        toll: totalDiscountedToll,
-        discountSummary: {
-          totalBase: totalBaseToll,
-          totalDiscounted: totalDiscountedToll,
-          totalSavings: Math.max(0, totalBaseToll - totalDiscountedToll),
-          appliedLabels: Array.from(mixAppliedLabels),
-          notes: Array.from(mixNotes)
-        },
-        sourceLabel: hasHighwayLeg ? '根拠: HERE Routing v8 ＋ 動的ETC割引' : '全区間 一般道優先（有料道路回避）',
-        total: totalGas + totalDiscountedToll,
-        modeSummary: modeLabels.join('➔'),
-        polylines,
-        wpNames: validWps.map(w => w.name)
-      };
-    }
-  }
-
-  const weatherData = await weatherPromise;
-  const hwWeatherHtml = getArrivalWeatherBadgeHtml(weatherData, hwTimes.end);
-  const loWeatherHtml = getArrivalWeatherBadgeHtml(weatherData, loTimes.end);
-  const mixWeatherHtml = mixData ? getArrivalWeatherBadgeHtml(weatherData, mixData.endDate) : '';
-
-  const hwRoiHtml = buildRoiRowsHtml(hwTotal, hwSec, loTotal, loSec, false);
-  const loRoiHtml = buildRoiRowsHtml(loTotal, loSec, loTotal, loSec, true);
-  const hwDiscountHtml = buildDiscountHtml(hwTimeline.discountSummary, hwTollObj.totalJpy);
-
-  const hwTollDisplay = hwTimeline.discountSummary.totalSavings > 0
-    ? `<span class="strike-price">${hwTollObj.totalJpy.toLocaleString()}円</span> ➔ ${hwEffectiveToll.toLocaleString()}円`
-    : `${hwEffectiveToll.toLocaleString()}円`;
-
-  if (!mixData) {
-    const timeDiffMin = Math.round((loSec - hwSec) / 60);
-    const costDiff = hwTotal - loTotal;
-
-    diffBanner.innerHTML = timeDiffMin > 0
-      ? `高速利用で ${formatShortDurationFromMin(timeDiffMin)}短縮（コスト差 ＋${costDiff.toLocaleString()}円）`
-      : `一般道でも所要時間はほぼ同等（${Math.abs(costDiff).toLocaleString()}円コスト削減）`;
-
-    compareGrid.className = 'compare-grid grid-2';
-    compareGrid.innerHTML = `
-      <div class="card highway">
-        <div class="card-title"><span>全高速優先</span></div>
-        <div class="time-schedule">${hwTimes.text}</div>
-        ${hwWeatherHtml}
-        ${hwDiscountHtml}
-        <div class="metric-row"><span>距離</span><b>${hwDist.toFixed(1)} km</b></div>
-        <div class="metric-row"><span>所要時間</span><b>${formatDuration(hwSec)}</b></div>
-        <div class="metric-row"><span>燃料費</span><b>約${hwGas.toLocaleString()}円</b></div>
-        <div class="metric-row"><span>高速料金</span><b>${hwTollDisplay}</b></div>
-        ${hwRoiHtml}
-        <div class="sub-info">${hwTollObj.sourceLabel}</div>
-        <div class="price-big">計 ${hwTotal.toLocaleString()}円</div>
-      </div>
-      <div class="card local">
-        <div class="card-title"><span>一般道（下道）</span></div>
-        <div class="time-schedule">${loTimes.text}</div>
-        ${loWeatherHtml}
-        <div class="metric-row"><span>距離</span><b>${loDist.toFixed(1)} km</b></div>
-        <div class="metric-row"><span>所要時間</span><b>${formatDuration(loSec)}</b></div>
-        <div class="metric-row"><span>燃料費</span><b>約${loGas.toLocaleString()}円</b></div>
-        <div class="metric-row"><span>高速料金</span><b>0円</b></div>
-        ${loRoiHtml}
-        <div class="sub-info">一般道優先（有料道路回避）</div>
-        <div class="price-big">計 ${loTotal.toLocaleString()}円</div>
-      </div>
-    `;
-
-    drawMap([
-      ...hwStats.polylines.map(p => ({ poly: p, color: '#14233c' })),
-      ...loStats.polylines.map(p => ({ poly: p, color: '#1e7e48' }))
-    ]);
-
-    navButtons.innerHTML = `
-      <button class="btn-map" onclick="openGoogleMapsNormal(false)">Googleマップ（高速優先）でナビ開始</button>
-      <button class="btn-map" style="background:var(--green);" onclick="openGoogleMapsNormal(true)">Googleマップ（一般道優先）でナビ開始</button>
-    `;
-
-    hwDetailWrap.style.display = 'block';
-    document.getElementById('hwDetailBody').style.display = 'block';
-    document.getElementById('hwDetailToggleText').innerText = '▲ 閉じる';
-    switchHwDetailTab('hw');
-
-  } else {
-    const wpSummary = mixData.wpNames.map(n => escapeHtml(n)).join(' ➔ ');
-    const mixRoiHtml = buildRoiRowsHtml(mixData.total, mixData.sec, loTotal, loSec, false);
-    const mixDiscountHtml = buildDiscountHtml(mixData.discountSummary, mixData.baseToll);
-    const mixTollDisplay = mixData.discountSummary.totalSavings > 0
-      ? `<span class="strike-price">${mixData.baseToll.toLocaleString()}円</span> ➔ ${mixData.toll.toLocaleString()}円`
-      : `${mixData.toll.toLocaleString()}円`;
-
-    diffBanner.innerHTML = `3ルート戦略比較（経由地${mixData.wpNames.length}ヶ所: ${wpSummary}）`;
-    compareGrid.className = 'compare-grid grid-3';
-    compareGrid.innerHTML = `
-      <div class="card highway">
-        <div class="card-title"><span>全高速</span></div>
-        <div class="time-schedule">${hwTimes.text}</div>
-        ${hwWeatherHtml}
-        ${hwDiscountHtml}
-        <div class="metric-row"><span>距離</span><b>${hwDist.toFixed(1)} km</b></div>
-        <div class="metric-row"><span>時間</span><b>${formatDuration(hwSec)}</b></div>
-        <div class="metric-row"><span>燃料費</span><b>約${hwGas.toLocaleString()}円</b></div>
-        <div class="metric-row"><span>高速代</span><b>${hwTollDisplay}</b></div>
-        ${hwRoiHtml}
-        <div class="sub-info">${hwTollObj.sourceLabel}</div>
-        <div class="price-big">計 ${hwTotal.toLocaleString()}円</div>
-      </div>
-      <div class="card mix">
-        <div class="card-title"><span style="color:var(--orange-dark);">ミックス (${mixData.modeSummary})</span></div>
-        <div class="time-schedule">${mixData.timeText}</div>
-        ${mixWeatherHtml}
-        ${mixDiscountHtml}
-        <div class="metric-row"><span>距離</span><b>${mixData.dist.toFixed(1)} km</b></div>
-        <div class="metric-row"><span>時間</span><b>${formatDuration(mixData.sec)}</b></div>
-        <div class="metric-row"><span>燃料費</span><b>約${mixData.gas.toLocaleString()}円</b></div>
-        <div class="metric-row"><span>高速代</span><b>${mixTollDisplay}</b></div>
-        ${mixRoiHtml}
-        <div class="sub-info" style="color:var(--orange-dark);">${mixData.sourceLabel}</div>
-        <div class="price-big">計 ${mixData.total.toLocaleString()}円</div>
-      </div>
-      <div class="card local">
-        <div class="card-title"><span style="color:var(--green);">全下道</span></div>
-        <div class="time-schedule">${loTimes.text}</div>
-        ${loWeatherHtml}
-        <div class="metric-row"><span>距離</span><b>${loDist.toFixed(1)} km</b></div>
-        <div class="metric-row"><span>時間</span><b>${formatDuration(loSec)}</b></div>
-        <div class="metric-row"><span>燃料費</span><b>約${loGas.toLocaleString()}円</b></div>
-        <div class="metric-row"><span>高速代</span><b>0円</b></div>
-        ${loRoiHtml}
-        <div class="sub-info">一般道優先（有料道路回避）</div>
-        <div class="price-big">計 ${loTotal.toLocaleString()}円</div>
-      </div>
-    `;
-
-    drawMap([
-      ...mixData.polylines,
-      ...loStats.polylines.map(p => ({ poly: p, color: '#1e7e48' }))
-    ]);
-
-    const legButtonsHtml = currentMixLegs.map((leg, idx) => {
-      const fromLabel = escapeHtml(formatDisplayOrigin(leg.from));
-      const toLabel = escapeHtml(formatDisplayOrigin(leg.to));
-      const modeTag = leg.avoidTolls ? '下道' : '高速';
-      const bg = (idx % 2 === 0) ? 'var(--orange)' : 'var(--orange-dark)';
-      return `<button class="btn-map" style="background:${bg};" onclick="openGoogleMapsLeg(${idx})">区間${idx + 1} [${modeTag}] を開始（${fromLabel} ➔ ${toLabel}）</button>`;
-    }).join('');
-
-    navButtons.innerHTML = `
-      <div class="nav-group-label">▼ ミックスルート 区間別ナビ開始（${currentMixLegs.length}区間）</div>
-      ${legButtonsHtml}
-      <button class="btn-map" style="background:var(--navy-light);" onclick="openGoogleMapsAllWaypoints()">全経由地まとめてGoogleマップで開く</button>
-      <div class="nav-group-label">▼ 通常ルート 一括ナビ開始</div>
-      <button class="btn-map" onclick="openGoogleMapsNormal(false)">全高速優先でナビ開始</button>
-      <button class="btn-map" style="background:var(--green);" onclick="openGoogleMapsNormal(true)">全下道優先でナビ開始</button>
-    `;
-
-    hwDetailWrap.style.display = 'block';
-    document.getElementById('hwDetailBody').style.display = 'block';
-    document.getElementById('hwDetailToggleText').innerText = '▲ 閉じる';
-    switchHwDetailTab('mix');
-  }
-
-  navButtons.style.display = 'block';
-}
-
-// ===== Leaflet地図描画（HERE Flexible Polyline使用） =====
-function drawMap(polylines) {
-  const mapDiv = document.getElementById('map');
-  mapDiv.style.display = 'block';
-
-  if (typeof L === 'undefined' || typeof decodeFlexiblePolyline !== 'function') {
-    mapDiv.innerHTML = '<div style="padding:20px; text-align:center; font-size:12px; color:#64748b;">地図ライブラリ読込中...</div>';
-    return;
-  }
-
-  if (leafletMapInstance) {
-    leafletMapInstance.remove();
-    leafletMapInstance = null;
-  }
-
-  leafletMapInstance = L.map('map');
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap contributors',
-    maxZoom: 19
-  }).addTo(leafletMapInstance);
-
-  const bounds = L.latLngBounds([]);
-  let hasPoints = false;
-
-  polylines.forEach(item => {
-    if (!item.poly) return;
-    try {
-      const pts = decodeFlexiblePolyline(item.poly).map(c => [c.lat, c.lng]);
-      if (pts.length > 0) {
-        hasPoints = true;
-        L.polyline(pts, { color: item.color, weight: 5, opacity: 0.88 }).addTo(leafletMapInstance);
-        pts.forEach(pt => bounds.extend(pt));
-      }
-    } catch (e) {}
-  });
-
-  if (hasPoints) {
-    leafletMapInstance.fitBounds(bounds, { padding: [20, 20] });
+    alert(`ルート計算エラー: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.innerText = "🚀 3ルート一括比較・料金＆割引判定を計算";
   }
 }
 
-function openGoogleMapsNormal(avoidTolls) {
-  const origParam = formatForNavUrl(currentOrigin);
-  const destParam = formatForNavUrl(currentDest);
-  let url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origParam)}&destination=${encodeURIComponent(destParam)}&travelmode=driving`;
-  if (avoidTolls) url += `&avoid=tolls`;
-  window.open(url, '_blank');
-}
-
-function openGoogleMapsLeg(legIndex) {
-  const leg = currentMixLegs[legIndex];
-  if (!leg) return;
-  const origin = formatForNavUrl(leg.from);
-  const destination = formatForNavUrl(leg.to);
-  let url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=driving`;
-  if (leg.avoidTolls) url += `&avoid=tolls`;
-  window.open(url, '_blank');
-}
-
-function openGoogleMapsAllWaypoints() {
-  const origParam = formatForNavUrl(currentOrigin);
-  const destParam = formatForNavUrl(currentDest);
-  const wpParams = waypoints
-    .map(w => w.name.trim())
-    .filter(n => n !== "")
-    .map(n => formatForNavUrl(n));
-  let url = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origParam)}&destination=${encodeURIComponent(destParam)}&travelmode=driving`;
-  if (wpParams.length > 0) {
-    url += `&waypoints=${encodeURIComponent(wpParams.join('|'))}`;
+function openGoogleMapsRoute(modeType) {
+  if (!currentOrigin || !currentDest) return;
+  const originEnc = encodeURIComponent(formatForNavUrl(currentOrigin));
+  const destEnc = encodeURIComponent(formatForNavUrl(currentDest));
+  const cleanWps = waypoints.filter(w => w.name && w.name.trim()).map(w => encodeURIComponent(formatForNavUrl(w.name.trim())));
+  let url = `https://www.google.com/maps/dir/?api=1&origin=${originEnc}&destination=${destEnc}&travelmode=driving`;
+  if (cleanWps.length > 0) {
+    url += `&waypoints=${cleanWps.join('%7C')}`;
   }
-  window.open(url, '_blank');
+  if (modeType === 'local') {
+    url += `&avoid=highways`;
+  }
+  window.open(url, '_blank', 'noopener');
 }
 
-// ===== 起動時初期化 =====
-(async function initApp() {
+function openYahooNaviRoute() {
+  if (!currentOrigin || !currentDest) return;
+  const originEnc = encodeURIComponent(formatForNavUrl(currentOrigin));
+  const destEnc = encodeURIComponent(formatForNavUrl(currentDest));
+  const url = `https://map.yahoo.co.jp/route/car?from=${originEnc}&to=${destEnc}`;
+  window.open(url, '_blank', 'noopener');
+}
+
+window.addEventListener('DOMContentLoaded', () => {
   const savedActive = localStorage.getItem(ACTIVE_PROFILE_KEY);
-  if (savedActive) activeProfileName = savedActive;
+  if (savedActive) {
+    activeProfileName = savedActive;
+  }
+  setNowDateTime();
   loadActiveProfile();
   loadV5SettingsToUi();
   renderWaypoints();
-  setNowDateTime();
 
-  const settings = getV5Settings();
-  if (typeof initDynamicRules === 'function') {
-    await initDynamicRules(settings.customRulesUrl);
+  const v5Settings = getV5Settings();
+  if (window.dynamicRulesEngine && typeof window.dynamicRulesEngine.initDynamicRules === 'function') {
+    window.dynamicRulesEngine.initDynamicRules(v5Settings.customRulesUrl || "");
   }
-})();
-1 / 2 ページ
+});
