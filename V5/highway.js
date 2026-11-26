@@ -2,7 +2,7 @@
 let latestHwDetailHtml = "";
 let latestMixDetailHtml = "";
 
-const ROAD_NAME_RE = /([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:自動車道|高速道路|有料道路|高速[0-9０-９号線]*|名二環|伊勢湾岸|セントレアライン|知多半島道路|知多横断道路|南知多道路|東海環状|東海北陸|東名|名神|新東名|新名神|中央道|北陸道|関越|東北道|常磐道|山陽道|中国道|九州道|圏央道|外環|首都高|阪神高速|名古屋高速|福岡高速|北九州高速|広島高速))/g;
+const ROAD_NAME_RE = /([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:自動車道|高速道路|有料道路|高速[0-9０-９号線]*|名二環|伊勢湾岸|セントレアライン|知多半島道路|知多横断道路|南知多道路|東海環状|東海北陸|新東名|新名神|東名高速|東名|名神高速|名神|中央道|北陸道|関越|東北道|常磐道|山陽道|中国道|九州道|圏央道|外環|首都高|阪神高速|名古屋高速|福岡高速|北九州高速|広島高速))/g;
 
 const OPERATOR_LABELS = {
   urban_nagoya: "名古屋高速",
@@ -19,6 +19,8 @@ function normalizeRoadName(name) {
   if (!name) return "";
   let s = String(name).replace(/[０-９Ａ-Ｚａ-ｚ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
   if (s === "第二東海自動車道" || s === "新東名") return "新東名高速道路";
+  if (s === "東名" || s === "東名高速") return "東名高速道路";
+  if (s === "名神" || s === "名神高速") return "名神高速道路";
   if (s === "名二環") return "名古屋第二環状自動車道";
   if (s === "東京都自動車道") return "首都高速";
   return s;
@@ -38,13 +40,22 @@ function detectTollOperator(roadName) {
 
 function extractDrivingRoad(inst) {
   if (!inst) return "";
-  const withoutDir = inst.replace(/[^\n\s/（）()]+?\s*方面の\s*/g, "");
-  const matches = withoutDir.match(ROAD_NAME_RE);
+  // 「〇〇方面」「〇〇の表示」「〇〇へ進む」などの行き先・看板表記を除去してから走行路線を抽出
+  let cleaned = String(inst)
+    .replace(/[（(][^（）()]*?の表示[）)]/g, "")
+    .replace(/[^\n\s/（）()、。]+?\s*方面(?:の|へ|に)?/g, "");
+
+  // 「〜に入る」「〜に合流」「〜を進む」の直前にある路線名を最優先で取得
+  const enterMatch = cleaned.match(/([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:自動車道|高速道路|有料道路|高速[0-9０-９号線]*|名二環|伊勢湾岸|セントレアライン|知多半島道路|知多横断道路|南知多道路|東海環状|東海北陸|新東名|新名神|東名高速|東名|名神高速|名神|中央道|北陸道|関越|東北道|常磐道|山陽道|中国道|九州道|圏央道|外環|首都高|阪神高速|名古屋高速|福岡高速|北九州高速|広島高速))\s*(?:に|へ)?(?:入|合流|進)/);
+  if (enterMatch) {
+    return normalizeRoadName(enterMatch[1]);
+  }
+
+  const matches = cleaned.match(ROAD_NAME_RE);
   if (matches && matches.length > 0) {
     return normalizeRoadName(matches[matches.length - 1]);
   }
-  const fallback = inst.match(ROAD_NAME_RE);
-  return (fallback && fallback.length > 0) ? normalizeRoadName(fallback[fallback.length - 1]) : "";
+  return "";
 }
 
 function extractFacilityName(inst, role) {
@@ -128,11 +139,12 @@ function parseHighwaySegmentsFromHere(legResult, legStartTimeObj, legFromLabel, 
     const inst = actions[i].instruction || "";
     const isTollAction = /有料|高速|自動車道|IC|ＩＣ|JCT|ＪＣＴ|本線料金所|料金所/.test(inst);
     const road = extractDrivingRoad(inst);
-    const op = detectTollOperator(road);
+    const op = road ? detectTollOperator(road) : null;
 
     if (!current && isTollAction && op) {
       current = {
         road: road || OPERATOR_LABELS[op] || "有料道路",
+        roads: road ? [road] : [],
         operator: op,
         entryIc: extractFacilityName(inst, "entry") || `${legFromLabel}付近入口`,
         exitIc: null,
@@ -144,7 +156,10 @@ function parseHighwaySegmentsFromHere(legResult, legStartTimeObj, legFromLabel, 
         isEstimated: false
       };
     } else if (current) {
-      const isExit = /出口|一般道|流出|降り/.test(inst) || (road && road !== current.road && !/JCT|ＪＣＴ/.test(inst));
+      const isExit = /出口|一般道|流出|降り/.test(inst);
+      // 同じNEXCO同士のJCT接続（例：名神 → 東名）は1つの連続有料区間として統合
+      const isOperatorSwitch = road && op && op !== current.operator && !/JCT|ＪＣＴ/.test(inst);
+
       if (isExit) {
         current.exitIc = extractFacilityName(inst, "exit") || `${legToLabel}付近出口`;
         current.endOffsetSec = elapsedSec;
@@ -152,6 +167,30 @@ function parseHighwaySegmentsFromHere(legResult, legStartTimeObj, legFromLabel, 
         current.distanceKm = totalLegSec > 0 ? (totalLegKm * (current.durationSec / totalLegSec)) : 0;
         segments.push(current);
         current = null;
+      } else if (isOperatorSwitch) {
+        const switchIc = extractFacilityName(inst, "switch") || `${road}接続部`;
+        current.exitIc = switchIc;
+        current.endOffsetSec = elapsedSec;
+        current.durationSec = Math.max(60, current.endOffsetSec - current.startOffsetSec);
+        current.distanceKm = totalLegSec > 0 ? (totalLegKm * (current.durationSec / totalLegSec)) : 0;
+        segments.push(current);
+
+        current = {
+          road: road,
+          roads: [road],
+          operator: op,
+          entryIc: switchIc,
+          exitIc: null,
+          startOffsetSec: elapsedSec,
+          endOffsetSec: elapsedSec,
+          durationSec: 0,
+          distanceKm: 0,
+          toll: 0,
+          isEstimated: false
+        };
+      } else if (road && op === current.operator && !current.roads.includes(road)) {
+        current.roads.push(road);
+        current.road = current.roads.join(" ➔ ");
       }
     }
 
