@@ -8,7 +8,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="ROUTE TACTICS V5">
 <title>ROUTE TACTICS V5 | ルート・タクティクス</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script>
   (function() {
     const link = document.createElement('link');
@@ -60,24 +59,27 @@
   </div>
 </div>
 
-<!-- HERE APIキー・動的ルール設定モーダル -->
+<!-- APIキー・動的ルール設定モーダル -->
 <div class="modal-overlay" id="apiModal">
   <div class="modal-card">
     <div class="sec-head" style="margin-bottom:10px;">
-      <div><span class="sec-title-en">HERE & RULES CONFIG</span><span class="sec-title-jp">APIキー・動的割引ルール設定</span></div>
+      <div><span class="sec-title-en">API & RULES CONFIG</span><span class="sec-title-jp">APIキー・動的割引ルール設定</span></div>
     </div>
 
     <div class="privacy-note">
-      🔑 HERE Routing API v8 を利用するためのAPIキーと、動的割引JSON（既定: <code>./rules/etc_rules.json</code>）のURLを設定します。保存情報はブラウザ内に保持されます。
+      🔑 HERE Routing API v8 と Google Maps JavaScript API のキーを設定します。保存情報はブラウザ内に保持されます。
     </div>
 
-    <label>HERE API Key</label>
+    <label>HERE API Key（ルート検索・料金取得用）</label>
     <input type="password" id="hereApiKeyInput" placeholder="HERE REST APIキーを入力">
+
+    <label>Google Maps JavaScript API Key（地図描画用）</label>
+    <input type="password" id="googleMapsApiKeyInput" placeholder="AIza... で始まるGoogle Maps APIキーを入力">
 
     <label>動的割引ルール JSON URL（任意・空欄で ./rules/etc_rules.json）</label>
     <input type="text" id="customRulesUrlInput" placeholder="例：./rules/etc_rules.json">
 
-    <button type="button" class="btn-calc" onclick="saveApiSettingsAndReloadRules()" style="padding:11px; font-size:13px;">設定を保存してルール再読込</button>
+    <button type="button" class="btn-calc" onclick="saveAllApiSettings()" style="padding:11px; font-size:13px;">設定を保存してルール再読込</button>
     <button type="button" class="btn-close-modal" onclick="closeApiModal()">閉じる</button>
   </div>
 </div>
@@ -255,15 +257,23 @@
     </div>
 
     <div class="panel" id="mapCard" style="display:none;">
-      <div class="sec-head">
-        <div><span class="sec-title-en">ROUTE MAP</span><span class="sec-title-jp">ルート表示（HERE Polyline × Leaflet）</span></div>
+      <div class="sec-head" style="flex-wrap:wrap; gap:6px;">
+        <div><span class="sec-title-en">GOOGLE ROUTE MAP</span><span class="sec-title-jp">Googleマップ ルート比較表示</span></div>
+        <div style="display:flex; gap:4px; flex-wrap:wrap;">
+          <button type="button" class="btn-toggle" onclick="setGoogleMapFilter('all')">全ルート</button>
+          <button type="button" class="btn-toggle" onclick="setGoogleMapFilter('highway')">高速優先</button>
+          <button type="button" class="btn-toggle" onclick="setGoogleMapFilter('mix')">経由指定</button>
+          <button type="button" class="btn-toggle" onclick="setGoogleMapFilter('local')">下道</button>
+        </div>
       </div>
-      <div id="mapCanvas" style="height:300px; width:100%; border-radius:4px;"></div>
+      <div id="mapNoticeBox" style="display:none; font-size:12px; color:#b45309; background:#fffbeb; border:1px solid #fde68a; padding:10px; border-radius:4px; margin-bottom:8px;">
+        ⚠️ Google Maps JavaScript APIキーが未設定です。右上の「⚙️」からAPIキーを入力するとここにGoogleマップが表示されます。
+      </div>
+      <div id="mapCanvas" style="height:360px; width:100%; border-radius:4px; background:#e2e8f0;"></div>
     </div>
   </div>
 </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="flexpolyline.js"></script>
 <script src="rules/rules.js"></script>
 <script src="here_api.js"></script>
