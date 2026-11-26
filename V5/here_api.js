@@ -1,6 +1,5 @@
 
-here_api.js
-100%
+
 // ===== HERE Geocoding & Routing API v8 統合モジュール (V5) =====
 (function (global) {
   const HERE_GEOCODE_ENDPOINT = 'https://geocode.search.hereapi.com/v1/geocode';
