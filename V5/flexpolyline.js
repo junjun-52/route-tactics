@@ -52,7 +52,6 @@
     const values = decodeUnsignedValues(encoded);
     if (values.length < 2) return [];
 
-    // values[0]: format version (must be 1), values[1]: header
     const version = values[0];
     if (version !== 1) {
       throw new Error('Unsupported flexible polyline version: ' + version);
@@ -103,4 +102,3 @@
   }
   global.decodeFlexiblePolyline = decodeFlexiblePolyline;
 })(typeof window !== 'undefined' ? window : globalThis);
-1 / 2 ページ
