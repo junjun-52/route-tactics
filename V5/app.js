@@ -1,6 +1,4 @@
 
-app.js
-100%
 // ===== メイン制御・HEREルート検索・動的割引＆ROI算出・Leaflet地図描画 (V5) =====
 const MAX_WAYPOINTS = 5;
 
