@@ -3,6 +3,9 @@
   const HERE_GEOCODE_ENDPOINT = 'https://geocode.search.hereapi.com/v1/geocode';
   const HERE_ROUTING_ENDPOINT = 'https://router.hereapi.com/v8/routes';
 
+  // 東海エリア（名古屋・尾張周辺）を基準とした検索位置バイアス
+  const DEFAULT_BIAS_COORDS = '35.1815,136.9066';
+
   function parseCoords(text) {
     if (!text) return null;
     const match = String(text).match(/(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)/);
@@ -12,21 +15,47 @@
     return null;
   }
 
-  async function geocodeWithHere(queryText, apiKey) {
+  async function requestGeocode(queryText, apiKey, biasCoords) {
+    const params = new URLSearchParams({
+      q: queryText,
+      in: 'countryCode:JPN',
+      at: biasCoords || DEFAULT_BIAS_COORDS,
+      lang: 'ja',
+      limit: '5',
+      apiKey: apiKey
+    });
+
+    const url = `${HERE_GEOCODE_ENDPOINT}?${params.toString()}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok || !data.items || data.items.length === 0) {
+      return null;
+    }
+    return data.items;
+  }
+
+  async function geocodeWithHere(queryText, apiKey, biasCoords) {
     const coords = parseCoords(queryText);
     if (coords) return coords;
     if (!apiKey) throw new Error('HERE APIキーが設定されていません');
 
-    const url = `${HERE_GEOCODE_ENDPOINT}?q=${encodeURIComponent(queryText)}&in=countryCode:JPN&lang=ja&limit=1&apiKey=${encodeURIComponent(apiKey)}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    if (!res.ok || !data.items || data.items.length === 0) {
+    const cleaned = String(queryText).trim();
+    let items = await requestGeocode(cleaned, apiKey, biasCoords);
+
+    // 駅名などでヒットしにくい場合のフォールバック
+    if (!items && /駅$/.test(cleaned)) {
+      items = await requestGeocode(`${cleaned} 愛知県`, apiKey, biasCoords);
+    }
+
+    if (!items || items.length === 0) {
       throw new Error(`場所を特定できませんでした: ${queryText}`);
     }
+
+    const best = items[0];
     return {
-      lat: data.items[0].position.lat,
-      lng: data.items[0].position.lng,
-      title: data.items[0].title
+      lat: best.position.lat,
+      lng: best.position.lng,
+      title: best.title
     };
   }
 
@@ -48,8 +77,9 @@
     const baseDt = opts.baseDt || new Date();
     const mode = opts.mode || 'departure';
 
-    const origin = await geocodeWithHere(originText, apiKey);
-    const dest = await geocodeWithHere(destText, apiKey);
+    const origin = await geocodeWithHere(originText, apiKey, DEFAULT_BIAS_COORDS);
+    const originBias = `${origin.lat},${origin.lng}`;
+    const dest = await geocodeWithHere(destText, apiKey, originBias);
 
     const params = new URLSearchParams({
       transportMode: 'car',
