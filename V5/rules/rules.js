@@ -47,6 +47,11 @@
     return null;
   }
 
+  // NEXCO等のETC割引端数処理に合わせて10円単位（10円未満四捨五入）に丸める
+  function roundToTenYen(amount) {
+    return Math.max(0, Math.round(Number(amount) / 10) * 10);
+  }
+
   async function initDynamicRules(customRulesUrl) {
     const targetUrl = (customRulesUrl && customRulesUrl.trim()) ? customRulesUrl.trim() : DEFAULT_RULES_URL;
     const cacheBuster = (targetUrl.includes('?') ? '&' : '?') + '_v=' + Date.now();
@@ -137,9 +142,10 @@
 
     if (isMidnightWindow && opPolicy.midnightEligible && midnightClassOk) {
       const rate = Number(midnightCfg.rate) || 0.3;
-      const discountAmount = Math.round(baseToll * rate);
+      const finalToll = roundToTenYen(baseToll * (1 - rate));
+      const discountAmount = Math.max(0, baseToll - finalToll);
       return {
-        finalToll: Math.max(0, baseToll - discountAmount),
+        finalToll,
         discountAmount,
         discountRate: rate,
         appliedLabel: midnightCfg.label || '深夜割引',
@@ -164,10 +170,11 @@
       }
       if (isWeekend || Boolean(holidayName) || isExtraHoliday) {
         const rate = Number(holidayCfg.rate) || 0.3;
-        const discountAmount = Math.round(baseToll * rate);
+        const finalToll = roundToTenYen(baseToll * (1 - rate));
+        const discountAmount = Math.max(0, baseToll - finalToll);
         const dayLabel = holidayName ? `祝日（${holidayName}）` : (isExtraHoliday ? '特例対象日' : (dayOfWeek === 0 ? '日曜' : '土曜'));
         return {
-          finalToll: Math.max(0, baseToll - discountAmount),
+          finalToll,
           discountAmount,
           discountRate: rate,
           appliedLabel: holidayCfg.label || '休日割引',
