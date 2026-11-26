@@ -1,5 +1,3 @@
-
-
 // ===== HERE Flexible Polyline デコーダー（Pure JS） =====
 // 仕様: https://github.com/heremaps/flexible-polyline
 (function (global) {
