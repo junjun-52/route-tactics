@@ -38,8 +38,7 @@ function detectTollOperator(roadName) {
 
 function extractDrivingRoad(inst) {
   if (!inst) return "";
-  const withoutDir = inst.replace(/[^
-\s/（）()]+?\s*方面の\s*/g, "");
+  const withoutDir = inst.replace(/[^\n\s/（）()]+?\s*方面の\s*/g, "");
   const matches = withoutDir.match(ROAD_NAME_RE);
   if (matches && matches.length > 0) {
     return normalizeRoadName(matches[matches.length - 1]);
