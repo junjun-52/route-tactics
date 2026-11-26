@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "5.0.0",
+  "ruleVersion": "2026.11-nexco-dynamic",
+  "updatedAt": "2026-11-26T00:00:00+09:00",
+  "holidayApiUrl": "https://holidays-jp.github.io/api/v1/date.json",
+  "sources": [
+    {
+      "name": "NEXCO中日本 2026年度 休日割引適用日",
+      "url": "https://www.c-nexco.co.jp/topics/2421.html"
+    },
+    {
+      "name": "NEXCO東日本 2026年度 休日割引適用日",
+      "url": "https://www.e-nexco.co.jp/news/important_info/2026/0317/00016041.html"
+    },
+    {
+      "name": "NEXCO中日本 深夜割引の見直しについて",
+      "url": "https://dc2.c-nexco.co.jp/etc/discount/etc/night2/"
+    }
+  ],
+  "operatorPolicies": {
+    "nexco": { "label": "NEXCO高速", "holidayEligible": true, "midnightEligible": true },
+    "honshi": { "label": "本四高速", "holidayEligible": true, "midnightEligible": true },
+    "urban_nagoya": { "label": "名古屋高速", "holidayEligible": false, "midnightEligible": false },
+    "urban_tokyo": { "label": "首都高速", "holidayEligible": false, "midnightEligible": false },
+    "urban_hanshin": { "label": "阪神高速", "holidayEligible": false, "midnightEligible": false },
+    "urban_fukuoka": { "label": "福岡・北九州高速", "holidayEligible": false, "midnightEligible": false },
+    "urban_hiroshima": { "label": "広島高速", "holidayEligible": false, "midnightEligible": false },
+    "public_aichi": { "label": "知多半島・セントレアライン", "holidayEligible": false, "midnightEligible": false }
+  },
+  "holidayDiscount": {
+    "enabled": true,
+    "rate": 0.3,
+    "label": "休日割引（30%OFF）",
+    "eligibleVehicleClasses": ["standard", "light"],
+    "excludeDateRanges": [
+      { "start": "2026-04-29", "end": "2026-05-06", "reason": "GW特定期間（休日割引適用除外）" },
+      { "start": "2026-08-08", "end": "2026-08-16", "reason": "お盆特定期間（休日割引適用除外）" },
+      { "start": "2026-12-26", "end": "2027-01-04", "reason": "年末年始特定期間（休日割引適用除外）" },
+      { "start": "2027-04-29", "end": "2027-05-05", "reason": "GW特定期間（休日割引適用除外）" }
+    ],
+    "extraEligibleDates": []
+  },
+  "midnightDiscount": {
+    "enabled": true,
+    "rate": 0.3,
+    "label": "深夜割引（0時〜4時走行分・30%OFF目安）",
+    "startHour": 0,
+    "endHour": 4,
+    "eligibleVehicleClasses": ["standard", "light", "medium", "heavy", "oversize"]
+  }
+}
