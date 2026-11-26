@@ -40,17 +40,18 @@ function detectTollOperator(roadName) {
 
 function extractDrivingRoad(inst) {
   if (!inst) return "";
-  // 「〇〇方面」「〇〇の表示」「〇〇へ進む」などの行き先・看板表記を除去してから走行路線を抽出
+  // 看板表記「（〜の表示）」や行き先表記「〜方面」をすべて除外して実走行路線のみ抽出
   let cleaned = String(inst)
     .replace(/[（(][^（）()]*?の表示[）)]/g, "")
-    .replace(/[^\n\s/（）()、。]+?\s*方面(?:の|へ|に)?/g, "");
+    .replace(/[^\n\s/（）()、。]+?\s*方面(?:の|へ|に|ランプ)?/g, "");
 
-  // 「〜に入る」「〜に合流」「〜を進む」の直前にある路線名を最優先で取得
-  const enterMatch = cleaned.match(/([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:自動車道|高速道路|有料道路|高速[0-9０-９号線]*|名二環|伊勢湾岸|セントレアライン|知多半島道路|知多横断道路|南知多道路|東海環状|東海北陸|新東名|新名神|東名高速|東名|名神高速|名神|中央道|北陸道|関越|東北道|常磐道|山陽道|中国道|九州道|圏央道|外環|首都高|阪神高速|名古屋高速|福岡高速|北九州高速|広島高速))\s*(?:に|へ)?(?:入|合流|進)/);
+  // 「〜に入る」「〜へ合流」「〜を進む」「〜を走行」など実走行を示す表現を優先
+  const enterMatch = cleaned.match(/([一-龠ァ-ヶーA-Za-z0-9０-９]+?(?:自動車道|高速道路|有料道路|高速[0-9０-９号線]*|名二環|伊勢湾岸|セントレアライン|知多半島道路|知多横断道路|南知多道路|東海環状|東海北陸|新東名|新名神|東名高速|東名|名神高速|名神|中央道|北陸道|関越|東北道|常磐道|山陽道|中国道|九州道|圏央道|外環|首都高|阪神高速|名古屋高速|福岡高速|北九州高速|広島高速))\s*(?:に|へ|を)?(?:入|合流|進|走行)/);
   if (enterMatch) {
     return normalizeRoadName(enterMatch[1]);
   }
 
+  // JCTやランプ合流時の路線表記（〜方面を除外した後の路線名）
   const matches = cleaned.match(ROAD_NAME_RE);
   if (matches && matches.length > 0) {
     return normalizeRoadName(matches[matches.length - 1]);
@@ -137,14 +138,18 @@ function parseHighwaySegmentsFromHere(legResult, legStartTimeObj, legFromLabel, 
 
   for (let i = 0; i < actions.length; i++) {
     const inst = actions[i].instruction || "";
-    const isTollAction = /有料|高速|自動車道|IC|ＩＣ|JCT|ＪＣＴ|本線料金所|料金所/.test(inst);
     const road = extractDrivingRoad(inst);
     const op = road ? detectTollOperator(road) : null;
+    // 単なる「〜方面」ではなく、実際に高速・有料道路へ進入・合流するアクションかを判定
+    const isEnteringToll = Boolean(road && op) && (
+      /(?:に|へ|を)?(?:入|合流|進|走行)/.test(inst) ||
+      /(?:IC|ＩＣ|入口|料金所)/.test(inst)
+    );
 
-    if (!current && isTollAction && op) {
+    if (!current && isEnteringToll) {
       current = {
-        road: road || OPERATOR_LABELS[op] || "有料道路",
-        roads: road ? [road] : [],
+        road: road,
+        roads: [road],
         operator: op,
         entryIc: extractFacilityName(inst, "entry") || `${legFromLabel}付近入口`,
         exitIc: null,
@@ -157,8 +162,7 @@ function parseHighwaySegmentsFromHere(legResult, legStartTimeObj, legFromLabel, 
       };
     } else if (current) {
       const isExit = /出口|一般道|流出|降り/.test(inst);
-      // 同じNEXCO同士のJCT接続（例：名神 → 東名）は1つの連続有料区間として統合
-      const isOperatorSwitch = road && op && op !== current.operator && !/JCT|ＪＣＴ/.test(inst);
+      const isOperatorSwitch = road && op && op !== current.operator && !/JCT|ＪＣＴ/.test(inst) && /(?:に|へ|を)?(?:入|合流|進)/.test(inst);
 
       if (isExit) {
         current.exitIc = extractFacilityName(inst, "exit") || `${legToLabel}付近出口`;
@@ -189,6 +193,7 @@ function parseHighwaySegmentsFromHere(legResult, legStartTimeObj, legFromLabel, 
           isEstimated: false
         };
       } else if (road && op === current.operator && !current.roads.includes(road)) {
+        // 同じNEXCO路線同士（名神 ➔ 東名など）は1区間にまとめて両方表示
         current.roads.push(road);
         current.road = current.roads.join(" ➔ ");
       }
